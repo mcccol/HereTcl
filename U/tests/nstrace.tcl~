@@ -1,3 +1,0 @@
-namespace eval X {
-    variable V; array set V {}
-}
