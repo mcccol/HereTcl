@@ -32,7 +32,7 @@ if {[catch {
     Debug define cache
 }
 
-# define [dict get?] because it's so useful
+# define [dict get?] because it's *so* useful
 if {[llength [info commands ::tcl::dict::get?]] == 0} {
     # dict get? courtesy patthoyts
     proc ::tcl::dict::get? {dict args} {
@@ -45,6 +45,8 @@ if {[llength [info commands ::tcl::dict::get?]] == 0} {
     namespace ensemble configure ::dict -map [linsert [namespace ensemble configure ::dict -map] end get? ::tcl::dict::get?]
 }
 
+interp alias {} ::yieldm {} ::yieldto return -level 0	;# coroutine yielder
+
 # H - take a connection and HTTP it
 namespace eval H {
     variable default_port 80		;# default listener port
@@ -53,11 +55,6 @@ namespace eval H {
     # corovar - used extensively to store state in the per-coro scope
     proc corovar {n} {
 	uplevel 1 upvar #1 $n $n
-    }
-
-    # yieldm - used to coordinate coro calls
-    proc yieldm {args} {
-	::yieldto return -level 0 {*}$args
     }
 
     # defaults - parse defaults structure into var value dict
@@ -71,6 +68,7 @@ namespace eval H {
 	return $defaults
     }
 
+    # load - load an H package.
     proc load {args} {
 	variable home
 	set dir $home
@@ -85,18 +83,21 @@ namespace eval H {
 	namespace export -clear *
 	namespace ensemble create -subcommands {}
 
+	# R - namespace for all rx coroutines
 	namespace eval R {
-	    namespace import ::H::*
+	    namespace import [namespace parent [namespace current]]::*
 	}
+
+	# T - namespace for all tx coroutines
 	namespace eval T {
-	    namespace import ::H::*
+	    namespace import [namespace parent [namespace current]]::*
 	}
     }
 }
 
 package provide H 7.0
 
-# load the H components
+# load minimal H components
 foreach h {
     Hrx.tcl
     Htx.tcl
@@ -105,8 +106,9 @@ foreach h {
 }
 #H::load Hproc.tcl
 
+# more H - fill in some useful higher level functions
 namespace eval H {
-    # construct an HTTP Ok response
+    # Ok - construct an HTTP Ok response
     proc Ok {rsp args} {
 	if {[llength $args]%2} {
 	    set content [lindex $args end]
@@ -132,7 +134,15 @@ namespace eval H {
 	return $rsp
     }
 
-    # convert HTTP date to time
+    # construct an HTTP Bad response
+    proc Bad {rsp message {code 400}} {
+	corovar close; set close $message	;# this will cause the reader to close
+	dict set rsp -content <p>[H armour $message]</p>
+	dict set rsp -code $code
+	return [NoCache $rsp]
+    }
+
+    # DateInSeconds - convert HTTP date to Tcl time
     proc DateInSeconds {date} {
 	if {[string is integer -strict $date]} {
 	    return $date
@@ -147,7 +157,7 @@ namespace eval H {
 	}
     }
 
-    # return an HTTP date
+    # Date - return an HTTP date given a Tcl time
     proc Date {{seconds ""}} {
 	if {$seconds eq ""} {
 	    set seconds [clock seconds]
@@ -156,7 +166,7 @@ namespace eval H {
 	return [clock format $seconds -format {%a, %d %b %Y %T GMT} -gmt true]
     }
 
-    # contents may be Cached
+    # Cache - HTTP contents may be Cached
     proc Cache {rsp {age 0} {realm ""}} {
 	if {[string is integer -strict $age]} {
 	    # it's an age
@@ -191,7 +201,7 @@ namespace eval H {
 	return $rsp
     }
 
-    # contents may not be Cached
+    # NoCache - HTTP contents may not be Cached
     proc NoCache {rsp} {
 	dict set rsp cache-control "no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0"; # HTTP/1.1
 	dict set rsp expires "Sun, 01 Jul 2005 00:00:00 GMT"	;# deep past
@@ -199,13 +209,14 @@ namespace eval H {
 	return $rsp
     }
 
+    # NotFound - construct an HTTP NotFound response
     proc NotFound {rsp {message "<P>Not Found</P>"}} {
 	dict set rsp -content $message
 	dict set rsp -code 404
 	return [NoCache $rsp]
     }
 
-    # construct an HTTP NotModified response
+    # NotModified - construct an HTTP NotModified response
     proc NotModified {rsp} {
 	# remove content-related stuff
 	foreach n [dict keys $rsp content-*] {
@@ -226,31 +237,38 @@ namespace eval H {
 	return $result
     }
 
-    # Pipeline - this is where the action happens
+    # Pipeline - listener passes control here, with a new socket
+    # this is where the action happens
     proc Pipeline {opts socket ipaddr rport} {
 	Debug.listener {Pipeline $opts $socket $ipaddr $rport}
 	state_log {"" pipeline connect $socket $ipaddr $rport}
 
-	# construct argset for Rx and Tx
+	# construct Rx args from defaults
 	set rx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
 	if {[dict exists $opts rx]} {
-	    set rx [dict merge $rx [dict get $opts rx]]
+	    set rxx [dict get $opts rx]
 	    dict unset opts rx
+	    set rx [dict merge $rxx $rx]	;# listener can pass in defaults
 	}
-	set tx $rx
 
+	# construct Tx args from defaults
+	set tx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
 	if {[dict exists $opts tx]} {
-	    set tx [dict merge $tx [dict get $opts tx]]
+	    set txx [dict get $opts tx]
 	    dict unset opts tx
+	    set tx [dict merge $tx $txx]	;# listener can pass in defaults
 	}
 
-	if {[dict get? $opts namespace] ne ""} {
+	# allow listener to specify coro namespace
+	# - it will have to have T and R sub-namespaces
+	if {[dict exists $opts namespace]} {
 	    set namespace [dict get $opts namespace]
 	    dict unset opts namespace
 	} else {
-	    set namespace [namespace current]
+	    set namespace [namespace current]	;# default namespace is H
 	}
 
+	# look for tls opts
 	if {[dict exists $opts tls]} {
 	    # do something with TLS
 	    package require tls
@@ -264,33 +282,36 @@ namespace eval H {
 		-tls1 1
 		-require 0
 		-request 1} [dict get $opts tls]]
-	    
 	    tls::import $socket {*}$tls		;# graft the TLS connection on socket
 	    tls::handshake $socket		;# start the TLS handshake
 	}
 
-	# set up the encoding and translation - it should never change
+	# set up socket encoding and translation - it should never change
 	chan configure $socket -encoding binary -translation {binary binary}
 
-	# coroutine names
+	# coroutine names (allow listener to override the namespace)
 	set Tx ${namespace}::T::$socket
 	set Rx ${namespace}::R::$socket
 
 	# create a coro for rx one for tx, arrange for the socket to close respective half on termination
-	::coroutine $Rx $namespace Rx {*}$rx tx $Tx
-	::coroutine $Tx $namespace Tx {*}$tx	;# create Tx coro
+	::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
+	::coroutine $Tx $namespace Tx {*}$tx rx $Rx	;# create Tx coro around H::Tx command
+
+	# from this point on, the coroutines have control of the socket
     }
 
-    # listen on nominated port
+    # listen - on nominated port
     proc listen {args} {
 	if {[llength $args]%2} {
 	    set port [lindex $args end]
-	    set args [lrange $args 0 end-1]
+	    set args [lrange $args 0 end-1]	;# port tagged on the end of args
 	} elseif {[dict exists $args port]} {
-	    set port [dict get $args port]
+	    set port [dict get $args port]	;# passed in port
 	} else {
-	    variable default_port; set port $default_port
+	    variable default_port
+	    set port $default_port	;# no port specified - go default
 	}
+	dict set args listening $port	;# remember which port we're listening on
 
 	# start the listener
 	Debug.listener {server listening (Pipeline $args) [dict filter $args key -*] $port}

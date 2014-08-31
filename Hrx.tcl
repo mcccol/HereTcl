@@ -1,45 +1,11 @@
 # Hrx.tcl - light Httpd 1.1 rx component
 
-# load the H components
+# load required H components
 foreach h {
     Hurl.tcl
     Herr.tcl
 } {
     load $h
-}
-
-# construct an HTTP Bad response
-proc Bad {rsp message {code 400}} {
-    corovar close; set close $message	;# this will cause the reader to close
-    dict set rsp -content <p>[H armour $message]</p>
-    dict set rsp -code $code
-    return [NoCache $rsp]
-}
-
-# CharEncoding - determine the charset of any content
-proc CharEncoding {r} {
-    # decode the content-type ... FIXME - I bet there's more decoding to be done
-    set charset [join [lassign [split [dict get $r content-type] \;] ctype] \;]
-
-    if {[string match "*charset=*" $charset]} {
-	# there's a charset in there somewhere
-	set charset [string trim [lindex [split [string tolower $charset] =] 1]]
-    } elseif {$ctype eq "text"} {
-	# no charset defined by the request, use default
-	corovar def_charset
-	return $def_charset
-    } else {
-	return binary	;# best guess - no charset
-    }
-
-    # client specified both ctype and charset - do we know that charset?
-    set charset [string tolower $charset]
-    if {$charset ni [encoding names]} {
-	# send NotAcceptable
-	corovar tx; tailcall $tx reply [dict merge $r {-code 406}]
-    }
-
-    return $charset	;# return the encoding we've selected
 }
 
 # Tmpfile - create a temporary file with appropriate encodings
@@ -60,6 +26,7 @@ proc Tmpfile {R} {
     return $entity
 }
 
+# Readable - set socket's readable event
 proc Readable {socket args} {
     if {[llength $args]} {
 	lappend args [lindex [info level -1] 0]
@@ -86,181 +53,30 @@ proc ChunkSize {socket} {
     return $chunksize
 }
 
-# RxChunked - perform chunked entity reception
-proc RxChunked {r} {
-    corovar socket		;# connection to client
-    corovar todisk		;# the size at which we elect to leave entities on disk
-    corovar maxentity	;# maximum sized entity we will accept
-    corovar close		;# we are determined to close this receiver
+# CharEncoding - determine the charset of any content
+proc CharEncoding {r} {
+    # decode the content-type ... FIXME - I bet there's more decoding to be done
+    set charset [join [lassign [split [dict get $r content-type] \;] ctype] \;]
 
-    # get size of next chunk
-    set chunksize [ChunkSize $socket]	;# how many bytes to read?
-    if {$chunksize <= 0} {
-	# no more bytes to read
-	corovar entity_to_read; set entity_to_read 0	;# the entity has been read
-	return 0
-    }
-
-    # we can only know the length of a Chunked entity after it's been received,
-    # so we always store it in a temporary file
-    set entity [Tmpfile $r]	;# get entity fd
-    chan configure $entity -encoding binary
-
-    set total 0			;# total size of entity read so far
-    while {$chunksize > 0} {
-	if {$maxentity > 0 && ($total+$chunksize) > $maxentity} {
-	    # 413 "Request Entity Too Large"
-	    corovar tx; tailcall $tx reply [Bad $r "Request Entity Too Large ($maxentity)"]
-	}
-
-	# prepare the socket for copy - stop read event while copying
-	Readable $socket
-
-	while {![chan eof $socket] && ![error $socket]} {
-	    set buf [chan read $socket $chunksize]
-	    chan puts -nonewline $entity $buf
-	    set bytes [string length $buf]
-	    incr chunksize -$bytes
-	    incr total $bytes
-	}
-
-	if {[catch {chan eof $socket} eof] || $eof} {
-	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
-	}
-
-	set chunksize [ChunkSize $socket]	;# how big is next chunk?
-    }
-
-    dict set r content-length $total
-
-    Readable $socket [info coroutine]	;# restart reader loop
-
-    Debug.entity {got chunked entity in $entity}
-
-    # at this point we have a complete entity in $entity file, it's already been ungzipped
-    # we need to process it somehow.
-
-    corovar te
-    if {[info exists te] && "gzip" in [dict keys $te]} {
-	chan pop $entity	;# remove the gzip compression
-    }
-    set encoding [CharEncoding $r]
-    if {$encoding ne "binary"} {
-	chan configure $entity -encoding $encoding
-    }
-
-    if {$todisk == 0 || [chan tell size $epath] <= $todisk} {
-	# we don't want to have things on disk, or it's small enough to have in memory
-	# ??? How is entity encoded? - got to read it with encoding
-	dict set r -entity [chan read $entity]	;# grab the entity in its entirety
-	chan close $entity				;# close the entity fd
+    if {[string match "*charset=*" $charset]} {
+	# there's a charset in there somewhere
+	set charset [string trim [lindex [split [string tolower $charset] =] 1]]
+    } elseif {$ctype eq "text"} {
+	# no charset defined by the request, use default
+	corovar def_charset
+	return $def_charset
     } else {
-	# leave some hints for Query file processing
-	chan seek $entity 0			;# rewind entity to start
-	dict set r -entity_fd $entity	;# this entity is an open fd
+	return binary	;# best guess - no charset
     }
 
-    # read+parse more header fields - apparently this is possible with Chunked ... who knew?
-    dict merge r $r [Parse [Header $socket $r] $r]
-
-    return $r
-}
-
-# RxEntity - given an entity size, read it in.
-proc RxEntity {r} {
-    corovar socket		;# socket for pipeline
-    corovar todisk		;# size at which we leave entities on disk
-    corovar maxentity	;# maximum sized entity we will accept
-    corovar close		;# we are determined to close this receiver
-
-    # straight 'entity follows header' with explicit length
-    set left [dict get $r content-length]
-
-    # enforce server limits on Entity length
-    if {$maxentity > 0 && $left > $maxentity} {
-	# 413 "Request Entity Too Large"
-	corovar tx; tailcall $tx reply [Bad $r "Request Entity Too Large" 413]
+    # client specified both ctype and charset - do we know that charset?
+    set charset [string tolower $charset]
+    if {$charset ni [encoding names]} {
+	# send NotAcceptable
+	corovar tx; tailcall $tx reply [dict merge $r {-code 406}]
     }
 
-    set encoding [CharEncoding $r]	;# determine charset of content
-
-    # decide whether to read to RAM or disk
-    if {$todisk > 0 && $left > $todisk} {
-	# this entity is too large to be handled in memory, write it to disk
-	
-	# create a temp file to contain entity
-	set entity [Tmpfile $r]
-	chan configure $entity -encoding binary
-
-	# prepare the socket for copy - stop read event while copying
-	# configure copy as binary
-	Readable $socket
-
-	# start the copy
-	while {$left && ![chan eof $socket]} {
-	    set buf [read $socket $left]
-	    chan puts -nonewline $entity $buf
-	    incr left [string length $buf]
-	}
-
-	Readable $socket [info coroutine]		;# restart the reader
-
-	if {[catch {chan eof $socket} eof] || $eof} {
-	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
-	}
-
-	# at this point we have a complete entity in the open $entity file, it's already been ungzipped
-	# we need to process it somehow
-	chan seek $entity 0
-	if {$encoding ne "binary"} {
-	    chan configure $entity -encoding $encoding	;# set encoding (if any)
-	}
-
-	dict set r -entity_fd $entity
-    } elseif {$left > 0} {
-	# read entity into memory
-	Readable $socket [info coroutine]
-
-	set entity ""
-	while {[string length $entity] < $left && ![chan eof $socket]} {
-	    lassign [yieldm] from exception			;# wait for READ event
-	    if {$exception ne ""} {
-		Debug.httpd {got Rx exception '$exception' in RxEntity}
-		coroutine close
-		lappend close $exception
-		return $r
-	    }
-
-	    append entity [chan read $socket $left]	;# read in as much as is available
-	}
-
-	if {$encoding ne "binary"} {
-	    dict set r -entity [encoding convertfrom $encoding $entity]
-	} else {
-	    dict set r -entity $entity
-	}
-
-	Readable $socket [info coroutine]		;# restart the reader
-
-	if {[string length $entity] < $left} {
-	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
-	}
-
-	# postprocess/decode the entity
-	corovar te
-	if {[info exists te]
-	    && [dict exists $r -entity]
-	    && "gzip" in $te
-	} {
-	    dict set r -entity [::zlib inflate [dict get $r -entity]]
-	}
-    } else {
-	dict set r -entity ""
-	# the entity, length 0, is therefore already read
-	# 14.13: Any Content-Length greater than or equal to zero is a valid value.
-    }
-
-    return $r
+    return $charset	;# return the encoding we've selected
 }
 
 # Parse - given a set of header lines, parse them and populate the request dict
@@ -375,23 +191,8 @@ proc Parse {lines r} {
     return $r
 }
 
-# Header - read header of request
-proc Header {socket r} {
-    corovar maxheaders	;# maximum number of headers
-    corovar maxline		;# maximum header line length
-    corovar timeout		;# timout in mS
-
-    chan configure $socket -blocking 0
-
-    corovar timer		;# rx timer for timeout
-    if {[info exists timer]} {
-	::after cancel $timer
-	unset timer
-    }
-    if {[info exists timeout] && $timeout > 0} {
-	set timer [::after $timeout [info coroutine] "" timeout]
-    }
-
+# RxHeader - return list of header lines until end of header or eof
+proc RxHeader {socket r} {
     set lines {}
     while {![chan eof $socket]} {
 	lassign [yieldm] from exception	;# block until there's some input
@@ -431,6 +232,200 @@ proc Header {socket r} {
     return $lines	;# we got EOF - maybe we still have lines
 }
 
+# Header - read header of request
+proc Header {socket r} {
+    corovar maxheaders	;# maximum number of headers
+    corovar maxline	;# maximum header line length
+    corovar timeout	;# timout in mS
+
+    chan configure $socket -blocking 0
+
+    corovar timer		;# rx timer for timeout
+    if {[info exists timer]} {
+	::after cancel $timer
+	unset timer
+    }
+    if {[info exists timeout] && $timeout > 0} {
+	set timer [::after $timeout [info coroutine] "" timeout]
+    }
+    tailcall RxHeader $socket $r
+}
+
+# RxChunked - perform chunked entity reception
+proc RxChunked {r} {
+    corovar socket		;# connection to client
+    corovar todisk		;# the size at which we elect to leave entities on disk
+    corovar maxentity	;# maximum sized entity we will accept
+    corovar close		;# we are determined to close this receiver
+
+    # get size of next chunk
+    set chunksize [ChunkSize $socket]	;# how many bytes to read?
+    if {$chunksize <= 0} {
+	# no more bytes to read
+	corovar entity_to_read; set entity_to_read 0	;# the entity has been read
+	return 0
+    }
+
+    # we can only know the length of a Chunked entity after it's been received,
+    # so we always store it in a temporary file
+    set entity [Tmpfile $r]	;# get entity fd
+    chan configure $entity -encoding binary
+
+    set total 0			;# total size of entity read so far
+    while {$chunksize > 0} {
+	if {$maxentity > 0 && ($total+$chunksize) > $maxentity} {
+	    # 413 "Request Entity Too Large"
+	    corovar tx; tailcall $tx reply [Bad $r "Request Entity Too Large ($maxentity)"]
+	}
+
+	# prepare the socket for copy - stop read event while copying
+	Readable $socket
+
+	while {![chan eof $socket] && ![error $socket]} {
+	    set buf [chan read $socket $chunksize]
+	    chan puts -nonewline $entity $buf
+	    set bytes [string length $buf]
+	    incr chunksize -$bytes
+	    incr total $bytes
+	}
+
+	if {[catch {chan eof $socket} eof] || $eof} {
+	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
+	}
+
+	set chunksize [ChunkSize $socket]	;# how big is next chunk?
+    }
+
+    dict set r content-length $total
+
+    Readable $socket [info coroutine]	;# restart reader loop
+
+    Debug.entity {got chunked entity in $entity}
+
+    # at this point we have a complete entity in $entity file, it's already been ungzipped
+    # we need to process it somehow.
+
+    corovar te
+    if {[info exists te] && "gzip" in [dict keys $te]} {
+	chan pop $entity	;# remove the gzip compression
+    }
+    set encoding [CharEncoding $r]
+    if {$encoding ne "binary"} {
+	chan configure $entity -encoding $encoding
+    }
+
+    if {$todisk == 0 || [chan tell size $epath] <= $todisk} {
+	# we don't want to have things on disk, or it's small enough to have in memory
+	# ??? How is entity encoded? - got to read it with encoding
+	dict set r -entity [chan read $entity]	;# grab the entity in its entirety
+	chan close $entity				;# close the entity fd
+    } else {
+	# leave some hints for Query file processing
+	chan seek $entity 0			;# rewind entity to start
+	dict set r -entity_fd $entity	;# this entity is an open fd
+    }
+
+    # read+parse more header fields - apparently this is possible with Chunked ... who knew?
+    tailcall dict merge $r [Parse [Header $socket $r] $r]
+}
+
+# RxEntity - given an entity size, read it in.
+proc RxEntity {r} {
+    corovar socket	;# socket for pipeline
+    corovar todisk	;# size at which we leave entities on disk
+    corovar maxentity	;# maximum sized entity we will accept
+    corovar close	;# we are determined to close this receiver
+
+    # simple 'entity follows header' with explicit length
+    set left [dict get $r content-length]
+
+    # enforce server limits on Entity length
+    if {$maxentity > 0 && $left > $maxentity} {
+	# 413 "Request Entity Too Large"
+	corovar tx; tailcall $tx reply [Bad $r "Request Entity Too Large" 413]
+    }
+
+    set encoding [CharEncoding $r]	;# determine charset of content
+
+    # decide whether to read to RAM or disk
+    if {$todisk > 0 && $left > $todisk} {
+	# this entity is too large to be handled in memory, write it to disk
+	
+	# create a temp file to contain entity
+	set entity [Tmpfile $r]
+	chan configure $entity -encoding binary
+
+	# prepare the socket for copy - stop read event while copying
+	# configure copy as binary
+	Readable $socket
+
+	# start the copy
+	while {$left && ![chan eof $socket]} {
+	    set buf [read $socket $left]
+	    chan puts -nonewline $entity $buf
+	    incr left [string length $buf]
+	}
+
+	Readable $socket [info coroutine]		;# restart the reader
+
+	if {[catch {chan eof $socket} eof] || $eof} {
+	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
+	}
+
+	# at this point we have a complete entity in the open $entity file, it's already been ungzipped
+	# we need to process it somehow
+	chan seek $entity 0
+	if {$encoding ne "binary"} {
+	    chan configure $entity -encoding $encoding	;# set encoding (if any)
+	}
+
+	dict set r -entity_fd $entity
+    } elseif {$left > 0} {
+	# read entity into memory
+	Readable $socket [info coroutine]
+
+	set entity ""
+	while {[string length $entity] < $left && ![chan eof $socket]} {
+	    lassign [yieldm] from exception			;# wait for READ event
+	    if {$exception ne ""} {
+		Debug.httpd {got Rx exception '$exception' in RxEntity}
+		coroutine close
+		lappend close $exception
+		return $r
+	    }
+
+	    append entity [chan read $socket $left]	;# read in as much as is available
+	}
+
+	if {$encoding ne "binary"} {
+	    dict set r -entity [encoding convertfrom $encoding $entity]
+	} else {
+	    dict set r -entity $entity
+	}
+
+	Readable $socket [info coroutine]		;# restart the reader
+
+	if {[string length $entity] < $left} {
+	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
+	}
+
+	# postprocess/decode the entity
+	corovar te
+	if {[info exists te]
+	    && [dict exists $r -entity]
+	    && "gzip" in $te
+	} {
+	    dict set r -entity [::zlib inflate [dict get $r -entity]]
+	}
+    } else {
+	dict set r -entity ""
+	# the entity, length 0, is therefore already read
+	# 14.13: Any Content-Length greater than or equal to zero is a valid value.
+    }
+
+    return $r
+}
+
 variable rx_defaults [defaults {
     port 80		;# default listening port
     maxline 4096	;# maximum line length we'll accept
@@ -458,42 +453,40 @@ proc Rx {args} {
     variable rx_defaults
     set ns [namespace qualifiers [info coroutine]]	;# default ns is our own
 
-    set args [dict merge $rx_defaults $args]
-    dict with args {}
+    set args [dict merge $rx_defaults $args]; dict with args {}	;# install rx state vars
+    set transaction 0	;# unique count of packets received by this receiver
+    set close ""	;# reason to close the reader after next request read
 
-    trace add command [info coroutine] delete [namespace code [list RxDead $socket $tx]]
-
-    Debug.listener {start Rx [info coroutine] $args}
-
-    set close ""		;# reason to close the reader after next request read
+    trace add command [info coroutine] delete [namespace code [list RxDead $socket $tx]] ;# track coro state
 
     # ensure there's a viable entity path
-    if {$entitypath ne ""} {
+    if {[info exists entitypath] && $entitypath ne ""} {
 	set entitypath [file normalize $entitypath]
 	dict set args entitypath $entitypath
 	file mkdir [file dirname $entitypath]
     }
+
+    Debug.listener {start Rx [info coroutine] $args}
 
     try {
 	# put receiver into header/CRLF mode and start listening for readable events
 	chan configure $socket -blocking 1
 	Readable $socket [info coroutine]	;# start listening on $socket with this coro
 
-	set transaction 0	;# unique count of packets received by this receiver
 	while {[chan pending input $socket] != -1 && [chan pending output $socket] != -1} {
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
 	    state_log {R rx request $socket $transaction}
 
-	    set headers [${ns}::Header $socket $R]	;# collect the header
+	    set headers [Header $socket $R]	;# collect the header
 	    if {![llength $headers]} {
-		break	;# timed out - shut up shop
+		break	;# must have timed out - shut up shop
 	    }
 
 	    # indicate to tx that a request with this transaction id
 	    # has been received and is (as yet) unsatisfied
 	    $tx pending $transaction
 
-	    set R [${ns}::Parse $headers $R]	;# $headers is a complete request header
+	    set R [Parse $headers $R]	;# parse $headers as a complete request header
 	    state_log {R rx headers $socket $transaction}
 
 	    # Read Entity (if any)
@@ -520,7 +513,7 @@ proc Rx {args} {
 		    }
 		}
 		if {[dict exists $te chunked]} {
-		    set R [${ns}::RxChunked $R]
+		    set R [RxChunked $R]
 		} else {
 		    tailcall $tx reply [Bad $R "Length Required" 411]
 		}
@@ -532,7 +525,7 @@ proc Rx {args} {
 	    }
 	    state_log {R rx entity $socket $transaction}
 
-	    ${ns}::process $R	;# Process the request+entity in a bespoke command
+	    process $R	;# Process the request+entity in a bespoke command
 
 	    if {($close ne "" && ![chan eof $socket])
 		|| ([dict exists $R connection] && [string tolower [dict get $R connection]] eq "close")
@@ -544,10 +537,9 @@ proc Rx {args} {
 	}
 	Debug.listener {Rx [info coroutine] DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1}
     } on error {e eo} {
-
 	Debug.error {Rx $socket ERROR '$e' ($eo)}
     } on return {e eo} {
-	# this happens if something tailcalls out of the coro
+	# this happens if something tailcalls out of the coro (?)
 	#Debug.error {Rx $socket RETURN '$e' ($eo)}
     } on continue {e eo} {
 	Debug.error {Rx $socket CONTINUE '$e' ($eo)}
@@ -561,7 +553,7 @@ proc Rx {args} {
 	    catch {::after cancel $timer}
 	}
 
-	catch {Readable $socket}
+	catch {Readable $socket}	;# turn off the chan event readable
 	catch {chan close $socket read}	;# close the socket read side
 	catch {$tx closing}		;# inform Tx coro that we're closing
 	state_log {"" rx closed $socket $transaction}

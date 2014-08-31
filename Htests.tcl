@@ -1,5 +1,6 @@
 lappend ::auto_path [pwd]
 package require H
+H::load Hproc.tcl
 
 # Unit tests
 
