@@ -74,6 +74,7 @@ namespace eval H {
 	set dir $home
 	puts stderr "load from $dir ($args)"
 	foreach a $args {
+	    if {[string match #* $a]} continue
 	    if {[file pathtype $a] eq "relative"} {
 		set a [file join $dir $a]
 	    }
@@ -98,13 +99,7 @@ namespace eval H {
 package provide H 7.0
 
 # load minimal H components
-foreach h {
-    Hrx.tcl
-    Htx.tcl
-} {
-    H::load $h
-}
-#H::load Hproc.tcl
+H::load Hrx.tcl Htx.tcl #H::load Hproc.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {

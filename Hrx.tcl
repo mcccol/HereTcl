@@ -1,13 +1,5 @@
 # Hrx.tcl - light Httpd 1.1 rx component
 
-# load required H components
-foreach h {
-    Hurl.tcl
-    Herr.tcl
-} {
-    load $h
-}
-
 # Tmpfile - create a temporary file with appropriate encodings
 proc Tmpfile {R} {
     # create a temp file to contain entity
@@ -79,43 +71,9 @@ proc CharEncoding {r} {
     return $charset	;# return the encoding we've selected
 }
 
-# Parse - given a set of header lines, parse them and populate the request dict
-proc Parse {lines r} {
-    Debug.httpdlow {Parse: ($lines)}
-    # parse the first header line into its constituents
-    set lines [lassign $lines header]; dict set r -Header full $header
-    set headers [split $header]
-
-    # get version - needed for some protocol decisions
-    set version [lindex $headers end]
-    if {[string match HTTP/* $version]} {
-	set version [lindex [split $version /] 1]
-    }
-    dict set r -Header version $version	;# may as well stick it in the -Header
-
-    # parse the header lines into named fields in $r
-    set clientheaders {}
-    foreach line $lines {
-	if {[string index $line 0] in {" " "\t"}} {
-	    dict append r $key " [string trim $line]"	;# continuation line
-	} else {
-	    set value [join [lassign [split $line ":"] key] ":"]
-	    set key [string tolower [string trim $key "- \t"]]
-
-	    if {[dict exists $r $key]} {
-		dict append r $key ",$value"	;# duplicate header - delimit with comma
-	    } else {
-		dict set r $key [string trim $value] ;# new header
-		lappend clientheaders $key	 ;# keep list of headers passed in by client
-	    }
-	}
-
-	# limit size of each field
-	corovar maxfield
-	if {$maxfield && [string length [dict get $r $key]] > $maxfield} {
-	    corovar tx; tailcall $tx reply [Bad $r "Illegal header: '$key' is too long"]
-	}
-    }
+# HeaderCheck - given a request dict $r, perform semantic checks and adjustments
+proc HeaderCheck {r} {
+    set headers [split [dict get $r -Header full]]
 
     # rfc2616 14.10:
     # A system receiving an HTTP/1.0 (or lower-version) message that
@@ -123,7 +81,7 @@ proc Parse {lines r} {
     # in this field, remove and ignore any header field(s) from the
     # message with the same name as the connection-token.
     #### I have no idea what this is for
-    if {$version < 1.1 && [dict exists $r connection]} {
+    if {[dict get $r -Header version] < 1.1 && [dict exists $r connection]} {
 	foreach token [split [dict get $r connection] ","] {
 	    catch {dict unset r [string trim $token]}
 	}
@@ -191,8 +149,55 @@ proc Parse {lines r} {
     return $r
 }
 
+# Parse - given a set of header lines, parse them and populate the request dict
+proc Parse {lines r} {
+    Debug.httpdlow {Parse: ($lines)}
+    # parse the first header line into its constituents
+    set lines [lassign $lines header]; dict set r -Header full $header
+    set headers [split $header]
+
+    # get version - needed for some protocol decisions
+    set version [lindex $headers end]
+    if {[string match HTTP/* $version]} {
+	set version [lindex [split $version /] 1]
+    }
+    dict set r -Header version $version	;# may as well stick it in the -Header
+
+    # parse the header lines into named fields in $r
+    set clientheaders {}
+    foreach line $lines {
+	if {[string index $line 0] in {" " "\t"}} {
+	    dict append r $key " [string trim $line]"	;# continuation line
+	} else {
+	    set value [join [lassign [split $line ":"] key] ":"]
+	    set key [string tolower [string trim $key "- \t"]]
+
+	    if {[dict exists $r $key]} {
+		# turn multiply occurring keys into a list of values
+		if {![dict exists $r -Header multiple $key]} {
+		    dict set r $key [list [dict get $r $key]]	;# first duplicate
+		}
+		dict lappend r $key $value
+		dict set r -Header multiple $key [llength [dict get $r $key]]
+	    } else {
+		dict set r $key $value
+		lappend clientheaders $key	 ;# keep list of headers passed in by client
+	    }
+	}
+
+	# limit size of each field
+	corovar maxfield
+	if {$maxfield && [string length [dict get $r $key]] > $maxfield} {
+	    corovar tx; tailcall $tx reply [Bad $r "Illegal header: '$key' is too long"]
+	}
+    }
+    dict set r -Header clientheaders $clientheaders
+    return $r
+}
+
 # RxHeader - return list of header lines until end of header or eof
 proc RxHeader {socket r} {
+    corovar maxline	;# maximum header line length
     set lines {}
     while {![chan eof $socket]} {
 	lassign [yieldm] from exception	;# block until there's some input
@@ -235,7 +240,6 @@ proc RxHeader {socket r} {
 # Header - read header of request
 proc Header {socket r} {
     corovar maxheaders	;# maximum number of headers
-    corovar maxline	;# maximum header line length
     corovar timeout	;# timout in mS
 
     chan configure $socket -blocking 0
@@ -248,6 +252,7 @@ proc Header {socket r} {
     if {[info exists timeout] && $timeout > 0} {
 	set timer [::after $timeout [info coroutine] "" timeout]
     }
+
     tailcall RxHeader $socket $r
 }
 
@@ -326,7 +331,7 @@ proc RxChunked {r} {
     }
 
     # read+parse more header fields - apparently this is possible with Chunked ... who knew?
-    tailcall dict merge $r [Parse [Header $socket $r] $r]
+    tailcall dict merge $r [HeaderCheck [Parse [Header $socket $r] $r]]
 }
 
 # RxEntity - given an entity size, read it in.
@@ -486,7 +491,7 @@ proc Rx {args} {
 	    # has been received and is (as yet) unsatisfied
 	    $tx pending $transaction
 
-	    set R [Parse $headers $R]	;# parse $headers as a complete request header
+	    set R [HeaderCheck [Parse $headers $R]]	;# parse $headers as a complete request header
 	    state_log {R rx headers $socket $transaction}
 
 	    # Read Entity (if any)
@@ -559,3 +564,6 @@ proc Rx {args} {
 	state_log {"" rx closed $socket $transaction}
     }
 }
+
+# load required H components
+load Hurl.tcl Herr.tcl #httpdchan.tcl

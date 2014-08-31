@@ -5,7 +5,7 @@ Debug define httpdchan
 namespace eval httpdchan {
     variable max_header [expr {20 * 1024}]	;# no http header may be more than this long
 
-    # Headers - split request/response line into header -Headers fields
+    # Headers - split request/response line into header -Header fields
     # turn rest of header into dict
     proc Headers {header {eol \n}} {
 	set header [regsub -all "$eol\[\t \]+" $header " "]	;# strip continuation lines
@@ -13,37 +13,40 @@ namespace eval httpdchan {
 	
 	# assemble headers into a dict
 	set headers {}
-	
+	set clientheaders {}
+
 	foreach element [lassign $header firstline] {
 	    set value [string trim [join [lassign [split $element :] key] :]]
 	    set key [string tolower [string trim $key]]
 	    if {[dict exists $headers $key]} {
 		# turn multiply occurring keys into a list of values
-		if {![dict exists $headers -Headers multiple $key]} {
+		if {![dict exists $headers -Header multiple $key]} {
 		    dict set headers $key [list [dict get $headers $key]]	;# first duplicate
 		}
 		
 		dict lappend headers $key $value
-		dict set headers -Headers multiple $key [llength [dict get $headers $key]]
+		dict set headers -Header multiple $key [llength [dict get $headers $key]]
 	    } else {
 		dict set headers $key $value
+		lappend clientheaders $key	 ;# keep list of headers passed in by client
 	    }
 	}
 
-	dict set headers -Headers full $firstline	;# record the first line as request/status line
-	set full $firstline
-	if {[string match HTTP/* $full]} {
+	dict set headers -Header full $firstline	;# record the first line as request/status line
+	if {[string match HTTP/* $firstline]} {
 	    # Status-Line = HTTP-Version SP Status-Code SP Reason-Phrase CRLF
-	    dict set headers -Headers reason [join [lassign [split [dict get $headers -Headers full]] version status]]
-	    dict set headers -Headers status $status
+	    dict set headers -Header reason [join [lassign [split [dict get $headers -Header full]] version status]]
+	    dict set headers -Header status $status
 	} else {
 	    # Request-Line = Method SP Request-URI SP HTTP-Version CRLF
-	    foreach name {method uri version} value [split $full] {
+	    foreach name {method uri version} value [split $firstline] {
 		set $name $value
-		dict set headers -Headers $name $value
+		dict set headers -Header $name $value
 	    }
 	}
-	dict set headers -Headers version [lindex [split $version /] end]
+
+	dict set headers -Header version [lindex [split $version /] end]
+	dict set headers -Header clientheaders $clientheaders
 
 	return $headers
     }
