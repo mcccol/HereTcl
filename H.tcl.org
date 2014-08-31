@@ -1,0 +1,2309 @@
+# H.tcl - light Httpd 1.1
+if {[info exists argv0] && ($argv0 eq [info script])} {
+    # try to load the rest of Wub, if this is running as part of the ensemble of modules
+    ::apply {{} {
+	set home [file dirname [file normalize [info script]]]
+	lappend ::auto_path $home	;#[file join [file dirname $home] Utilities] [file join [file dirname $home] extensions]
+    }}
+}
+
+
+# try to load the Debug module, for nice formatted debug narrative
+if {[catch {
+    package require Debug
+}]} {
+    proc ::Debug {args} {}	;# make dummy empty debug
+    foreach tag {error httpd listener httpdlow httpdtxlow entity cache cookies} {
+	interp alias {} Debug.$tag {} ::Debug
+    }
+} else {
+    Debug on error
+    Debug define httpd
+    Debug define listener
+    Debug define httpdlow
+    Debug define httpdtxlow
+    Debug define entity
+    Debug define cache
+    Debug define cookies
+}
+
+# define ::yieldm if it's not provided
+if {[llength [info commands ::yieldm]] == 0} {
+    proc ::yieldm {value} {
+	::yieldto return -level 0 $value
+    }
+}
+
+# define [dict get?] because it's so useful
+if {[llength [info commands ::tcl::dict::get?]] == 0} {
+    # dict get? courtesy patthoyts
+    proc ::tcl::dict::get? {dict args} {
+	if {[dict exists $dict {*}$args]} {
+	    return [dict get $dict {*}$args]
+	} else {
+	    return {}
+	}
+    }
+    namespace ensemble configure ::dict -map [linsert [namespace ensemble configure ::dict -map] end get? ::tcl::dict::get?]
+}
+
+# corovar - used extensively to store state in the per-coro scope
+if {[llength [info commands ::corovar]] == 0} {
+    proc corovar {n} {
+	uplevel 1 upvar #1 $n $n
+    }
+}
+
+package provide H 7.0
+
+interp alias {} tclarmour {} string map {\[ "&#x5B;" \] "&#x5D;" \{ "&#x7B;" \} "&#x7D;" $ "&#x24;"}
+
+interp alias {} armour {} string map {
+    &\# &\# ' &\#39;
+    \xa0 &nbsp; \xa1 &iexcl; \xa2 &cent; \xa3 &pound; \xa4 &curren;
+    \xa5 &yen; \xa6 &brvbar; \xa7 &sect; \xa8 &uml; \xa9 &copy;
+    \xaa &ordf; \xab &laquo; \xac &not; \xad &shy; \xae &reg;
+    \xaf &macr; \xb0 &deg; \xb1 &plusmn; \xb2 &sup2; \xb3 &sup3;
+    \xb4 &acute; \xb5 &micro; \xb6 &para; \xb7 &middot; \xb8 &cedil;
+    \xb9 &sup1; \xba &ordm; \xbb &raquo; \xbc &frac14; \xbd &frac12;
+    \xbe &frac34; \xbf &iquest; \xc0 &Agrave; \xc1 &Aacute; \xc2 &Acirc;
+    \xc3 &Atilde; \xc4 &Auml; \xc5 &Aring; \xc6 &AElig; \xc7 &Ccedil;
+    \xc8 &Egrave; \xc9 &Eacute; \xca &Ecirc; \xcb &Euml; \xcc &Igrave;
+    \xcd &Iacute; \xce &Icirc; \xcf &Iuml; \xd0 &ETH; \xd1 &Ntilde;
+    \xd2 &Ograve; \xd3 &Oacute; \xd4 &Ocirc; \xd5 &Otilde; \xd6 &Ouml;
+    \xd7 &times; \xd8 &Oslash; \xd9 &Ugrave; \xda &Uacute; \xdb &Ucirc;
+    \xdc &Uuml; \xdd &Yacute; \xde &THORN; \xdf &szlig; \xe0 &agrave;
+    \xe1 &aacute; \xe2 &acirc; \xe3 &atilde; \xe4 &auml; \xe5 &aring;
+    \xe6 &aelig; \xe7 &ccedil; \xe8 &egrave; \xe9 &eacute; \xea &ecirc;
+    \xeb &euml; \xec &igrave; \xed &iacute; \xee &icirc; \xef &iuml;
+    \xf0 &eth; \xf1 &ntilde; \xf2 &ograve; \xf3 &oacute; \xf4 &ocirc;
+    \xf5 &otilde; \xf6 &ouml; \xf7 &divide; \xf8 &oslash; \xf9 &ugrave;
+    \xfa &uacute; \xfb &ucirc; \xfc &uuml; \xfd &yacute; \xfe &thorn;
+    \xff &yuml; \u192 &fnof; \u391 &Alpha; \u392 &Beta; \u393 &Gamma;
+    \u394 &Delta; \u395 &Epsilon; \u396 &Zeta; \u397 &Eta; \u398 &Theta;
+    \u399 &Iota; \u39A &Kappa; \u39B &Lambda; \u39C &Mu; \u39D &Nu;
+    \u39E &Xi; \u39F &Omicron; \u3A0 &Pi; \u3A1 &Rho; \u3A3 &Sigma;
+    \u3A4 &Tau; \u3A5 &Upsilon; \u3A6 &Phi; \u3A7 &Chi; \u3A8 &Psi;
+    \u3A9 &Omega; \u3B1 &alpha; \u3B2 &beta; \u3B3 &gamma; \u3B4 &delta;
+    \u3B5 &epsilon; \u3B6 &zeta; \u3B7 &eta; \u3B8 &theta; \u3B9 &iota;
+    \u3BA &kappa; \u3BB &lambda; \u3BC &mu; \u3BD &nu; \u3BE &xi;
+    \u3BF &omicron; \u3C0 &pi; \u3C1 &rho; \u3C2 &sigmaf; \u3C3 &sigma;
+    \u3C4 &tau; \u3C5 &upsilon; \u3C6 &phi; \u3C7 &chi; \u3C8 &psi;
+    \u3C9 &omega; \u3D1 &thetasym; \u3D2 &upsih; \u3D6 &piv;
+    \u2022 &bull; \u2026 &hellip; \u2032 &prime; \u2033 &Prime;
+    \u203E &oline; \u2044 &frasl; \u2118 &weierp; \u2111 &image;
+    \u211C &real; \u2122 &trade; \u2135 &alefsym; \u2190 &larr;
+    \u2191 &uarr; \u2192 &rarr; \u2193 &darr; \u2194 &harr; \u21B5 &crarr;
+    \u21D0 &lArr; \u21D1 &uArr; \u21D2 &rArr; \u21D3 &dArr; \u21D4 &hArr;
+    \u2200 &forall; \u2202 &part; \u2203 &exist; \u2205 &empty;
+    \u2207 &nabla; \u2208 &isin; \u2209 &notin; \u220B &ni; \u220F &prod;
+    \u2211 &sum; \u2212 &minus; \u2217 &lowast; \u221A &radic;
+    \u221D &prop; \u221E &infin; \u2220 &ang; \u2227 &and; \u2228 &or;
+    \u2229 &cap; \u222A &cup; \u222B &int; \u2234 &there4; \u223C &sim;
+    \u2245 &cong; \u2248 &asymp; \u2260 &ne; \u2261 &equiv; \u2264 &le;
+    \u2265 &ge; \u2282 &sub; \u2283 &sup; \u2284 &nsub; \u2286 &sube;
+    \u2287 &supe; \u2295 &oplus; \u2297 &otimes; \u22A5 &perp;
+    \u22C5 &sdot; \u2308 &lceil; \u2309 &rceil; \u230A &lfloor;
+    \u230B &rfloor; \u2329 &lang; \u232A &rang; \u25CA &loz;
+    \u2660 &spades; \u2663 &clubs; \u2665 &hearts; \u2666 &diams;
+    \x22 &quot; \x26 &amp; \x3C &lt; \x3E &gt; \u152 &OElig;
+    \u153 &oelig; \u160 &Scaron; \u161 &scaron; \u178 &Yuml;
+    \u2C6 &circ; \u2DC &tilde; \u2002 &ensp; \u2003 &emsp; \u2009 &thinsp;
+    \u200C &zwnj; \u200D &zwj; \u200E &lrm; \u200F &rlm; \u2013 &ndash;
+    \u2014 &mdash; \u2018 &lsquo; \u2019 &rsquo; \u201A &sbquo;
+    \u201C &ldquo; \u201D &rdquo; \u201E &bdquo; \u2020 &dagger;
+    \u2021 &Dagger; \u2030 &permil; \u2039 &lsaquo; \u203A &rsaquo;
+    \u20AC &euro;
+}
+
+# H - take a connection and HTTP it
+namespace eval H {
+    variable default_port 80		;# default listener port
+    variable te_encodings {chunked}	;# support these te_encodings
+    variable ce_encodings {gzip}	;# support these char encodings
+    variable do_not_encode {image binary}	;# support these char encodings
+    variable buffering_size	1048576		;# how many bytes to read/send from files
+    variable chunksize	1024		;# how bug a chunk to send per chunk
+    variable minzip 10240		;# how big must an entity be before we will zip it
+
+    variable errStyle {
+	html * { padding:0; margin:0; }
+	body * { padding:10px 20px; }
+	body * * { padding:0; }
+	body { font:small sans-serif; }
+	body>div { border-bottom:1px solid #ddd; }
+	h1 { font-weight:normal; }
+	h2 { margin-bottom:.8em; }
+	h2 span { font-size:80%; color:#666; font-weight:normal; }
+	h3 { margin:1em 0 .5em 0; }
+	table {
+	    border:1px solid #ccc; border-collapse: collapse; background:white; }
+	tbody td, tbody th { vertical-align:top; padding:2px 3px; }
+	thead th {
+	    padding:1px 6px 1px 3px; background:#fefefe; text-align:left;
+	    font-weight:normal; font-size:11px; border:1px solid #ddd; }
+	tbody th { text-align:right; color:#666; padding-right:.5em; }
+	table.errorinfo { margin:5px 0 2px 40px; }
+	table.errorinfo td, table.dict td { font-family:monospace; }
+	#summary { background: #ffc; }
+	#summary h2 { font-weight: normal; color: #666; }
+	#errorinfo { background:#eee; }
+	#details { background:#f6f6f6; padding-left:120px; }
+	#details h2, #details h3 { position:relative; margin-left:-100px; }
+	#details h3 { margin-bottom:-1em; }
+    }
+
+    # Errors - map from HTTP result code to human readable form
+    variable Errors
+    array set Errors {
+	1 "Informational - Request received, continuing process"
+	100 Continue
+	101 "Switching Protocols"
+
+	2 "Success - received, understood, and accepted"
+	200 OK 201 Created 202 Accepted 203 "Non-Authoritative Information"
+	204 "No Content" 205 "Reset Content" 206 "Partial Content"
+
+	3 "Redirection - Further action needed"
+	300 "Multiple Choices" 301 "Moved Permanently" 302 "Found" 303 "See Other"
+	304 "Not Modified" 305 "Use Proxy" 307 "Temporary Redirect"
+
+	4 "Client Error - request bad or cannot be fulfilled"
+	400 "Bad Request" 401 "Unauthorized" 402 "Payment Required" 403 "Forbidden"
+	404 "Not Found" 405 "Method Not Allowed" 406 "Not Acceptable" 407 "Proxy Authentication Required"
+	408 "Request Time-out" 409 "Conflict" 410 "Gone" 411 "Length Required" 412 "Precondition Failed"
+	413 "Request Entity Too Large" 414 "Request-URI Too Large" 415 "Unsupported Media Type"
+	416 "Requested range not satisfiable" 417 "Expectation Failed"
+
+	5 "Server Error - Server failed to fulfill an apparently valid request"
+	500 "Internal Server Error" 501 "Not Implemented" 502 "Bad Gateway"
+	503 "Service Unavailable" 504 "Gateway Time-out" 505 "HTTP Version not supported"
+    }
+
+    # contents may not be Cached
+    proc NoCache {rsp} {
+	dict set rsp cache-control "no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0"; # HTTP/1.1
+	dict set rsp expires "Sun, 01 Jul 2005 00:00:00 GMT"	;# deep past
+	dict set rsp pragma "no-cache"	;# HTTP/1.0
+	return $rsp
+    }
+
+    # construct an HTTP Ok response
+    proc Ok {rsp args} {
+	if {[llength $args]%2} {
+	    set content [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	}
+
+	set rsp [dict merge $rsp $args]
+	if {[dict exists $rsp -code]} {
+	    set code [dict get $rsp -code]
+	} else {
+	    set code 200
+	}
+
+	if {[info exists content]} {
+	    dict set rsp -content $content
+	} elseif {![dict exists $rsp -content]} {
+	    dict set rsp content-length 0
+	}
+
+	if {![dict exists $rsp content-type]} {
+	    dict set rsp content-type text/html
+	}
+
+	dict set rsp -code $code
+	return $rsp
+    }
+
+    # construct an HTTP Bad response
+    proc Bad {rsp message {code 400}} {
+	corovar close; set close $message	;# this will cause the reader to close
+	dict set rsp -content <p>[armour $message]</p>
+	dict set rsp -code $code
+	return [NoCache $rsp]
+    }
+
+    # construct an HTTP response containing a server error page
+    proc ServerError {rsp error {eo ""}} {
+	Debug.error {Server Error: '$error' ($eo) $rsp}
+	corovar close; set close $error	;# this will cause the reader to close
+
+	try {
+	    set error [tclarmour [armour $error]]
+	    if {[string length $error] > 80} {
+		set title [string range $error 0 80]...
+	    } else {
+		set title $error
+	    }
+
+	    variable errStyle
+	    set html <html>\n<head>\n
+	    append html "<style type='text/css'>" $errStyle </style> \n
+	    append html <title> $title </title> \n
+	    append html </head> \n
+
+	    # format up the page
+	    append html <body> \n <H2> $title </H2> \n
+
+	    append html "<div id='summary'>" $error </div> \n
+	    
+	    append html "<div id='errorinfo'>"
+	    if {$eo ne ""} {
+		append html <H2> "Error Code " '[dict get $eo -errorcode]' </H2>
+		dict unset eo -errorcode
+		
+		append html <pre> [tclarmour [armour [dict get $eo -errorinfo]]] </pre>
+		dict unset eo -errorinfo
+		append html "<table class='errorinfo'>" \n
+		append html <tbody> \n
+		foreach {n1 v1} [dict get $eo -errorstack] {
+		    append html <tr> <td> [tclarmour [armour $n1]] </td> <td> [tclarmour [armour $v1]] </td> </tr> \n
+		}
+		dict unset eo -errorstack
+		
+		dict for {n v} $eo {
+		    append html <tr> <td> [tclarmour [armour $n]] </td> <td> <pre> [tclarmour [armour $v]] </pre> </td> </tr> \n
+		}
+		append html </tbody> \n </table> \n
+	    }
+	    
+	    catch {append html <p> "Caller: " <code> [tclarmour [armour [info level -1]]] </code> </p>}
+	    
+	    append html </div> \n </body> \n
+	} on error {e1 eo1} {
+	    Debug.error {Recursive Server Error: '$e1' ($eo1)}
+	    set html [tclarmour [armour $error]]\n[tclarmour [armour $eo]]
+	} finally {
+	    # Errors are completely dynamic - no caching!
+	    dict set rsp -code 500
+	    dict set rsp content-type text/html
+	    dict set rsp -content $html
+	    return [NoCache $rsp]
+	}
+    }
+
+    # Now - return the current time and date in HTTP format
+    proc Now {} {
+	return [clock format [clock seconds] -format {%a, %d %b %Y %T GMT} -gmt true]
+    }
+
+    # CharEncoding - determine the charset of any content
+    proc CharEncoding {r} {
+	# decode the content-type ... FIXME - I bet there's more decoding to be done
+	set charset [join [lassign [split [dict get $r content-type] \;] ctype] \;]
+
+	if {[string match "*charset=*" $charset]} {
+	    # there's a charset in there somewhere
+	    set charset [string trim [lindex [split [string tolower $charset] =] 1]]
+	} elseif {$ctype eq "text"} {
+	    # no charset defined by the request, use default
+	    corovar def_charset
+	    return $def_charset
+	} else {
+	    return binary	;# best guess - no charset
+	}
+
+	# client specified both ctype and charset - do we know that charset?
+	set charset [string tolower $charset]
+	if {$charset ni [encoding names]} {
+	    # send NotAcceptable
+	    corovar socket; tailcall T::tx_$socket reply [dict merge $r {-code 406}]
+	}
+
+	return $charset	;# return the encoding we've selected
+    }
+
+    # Tmpfile - create a temporary file with appropriate encodings
+    proc Tmpfile {R} {
+	# create a temp file to contain entity
+	corovar entitypath	;# path in which to create entities
+	set entity [file tempfile $entitypath]
+
+	chan configure $entity -translation binary	;# store it as we get it
+
+	# prepare output file for receiving chunks
+	corovar te
+	if {[info exists te] && "gzip" in [dict keys $te]} {
+	    ::zlib push inflate $entity	;# inflate it on the fly
+	    chan configure $entity -translation binary
+	}
+
+	return $entity
+    }
+
+    proc Readable {socket args} {
+	if {[llength $args]} {
+	    lappend args [lindex [info level -1] 0]
+	}
+	return [chan event $socket readable $args]
+    }
+
+    # ChunkSize - return the next chunk size
+    proc ChunkSize {socket} {
+	Readable $socket [info coroutine]	;# that will be this
+	yield					;# await next chunk size line
+	Readble $socket				;# turn off readable event
+
+	set chunk_extra [join [lassign [split [string range [gets $socket] 0 end-1] \;] cs] \;]
+	set chunksize 0x$cs	;# how many bytes to read?
+
+	return $chunksize
+    }
+
+    # RxChunked - perform chunked entity reception
+    proc RxChunked {r} {
+	corovar socket		;# connection to client
+	corovar todisk		;# the size at which we elect to leave entities on disk
+	corovar maxentity	;# maximum sized entity we will accept
+	corovar close		;# we are determined to close this receiver
+
+	# get size of next chunk
+	set chunksize [ChunkSize $socket]	;# how many bytes to read?
+	if {$chunksize <= 0} {
+	    # no more bytes to read
+	    corovar entity_to_read; set entity_to_read 0	;# the entity has been read
+	    return 0
+	}
+
+	# we can only know the length of a Chunked entity after it's been received,
+	# so we always store it in a temporary file
+	set entity [Tmpfile $r]	;# get entity fd
+	chan configure $entity -encoding binary
+
+	set total 0			;# total size of entity read so far
+	while {$chunksize > 0} {
+	    if {$maxentity > 0 && ($total+$chunksize) > $maxentity} {
+		# 413 "Request Entity Too Large"
+		tailcall T::tx_$socket reply [Bad $r "Request Entity Too Large ($maxentity)"]
+	    }
+
+	    # prepare the socket for copy - stop read event while copying
+	    Readable $socket
+
+	    while {![chan eof $socket] && ![error $socket]} {
+		set buf [chan read $socket $chunksize]
+		chan puts -nonewline $entity $buf
+		set bytes [string length $buf]
+		incr chunksize -$bytes
+		incr total $bytes
+	    }
+
+	    if {[catch {chan eof $socket} eof] || $eof} {
+		tailcall T::tx_$socket reply [Bad $r "EOF in entity"]
+	    }
+
+	    set chunksize [ChunkSize $socket]	;# how big is next chunk?
+	}
+
+	dict set r content-length $total
+
+	Readable $socket rx_$socket	;# restart reader loop
+
+	Debug.entity {got chunked entity in $entity}
+
+	# at this point we have a complete entity in $entity file, it's already been ungzipped
+	# we need to process it somehow.
+
+	corovar te
+	if {[info exists te] && "gzip" in [dict keys $te]} {
+	    chan pop $entity	;# remove the gzip compression
+	}
+	set encoding [CharEncoding $r]
+	if {$encoding ne "binary"} {
+	    chan configure $entity -encoding $encoding
+	}
+
+	if {$todisk == 0 || [chan tell size $epath] <= $todisk} {
+	    # we don't want to have things on disk, or it's small enough to have in memory
+	    # ??? How is entity encoded? - got to read it with encoding
+	    dict set r -entity [chan read $entity]	;# grab the entity in its entirety
+	    chan close $entity				;# close the entity fd
+	} else {
+	    # leave some hints for Query file processing
+	    chan seek $entity 0			;# rewind entity to start
+	    dict set r -entity_fd $entity	;# this entity is an open fd
+	}
+
+	# read+parse more header fields - apparently this is possible with Chunked ... who knew?
+	dict merge r $r [Parse [Header $socket $r] $r]
+
+	return $r
+    }
+
+    # RxEntity - given an entity size, read it in.
+    proc RxEntity {r} {
+	corovar socket		;# socket for pipeline
+	corovar todisk		;# size at which we leave entities on disk
+	corovar maxentity	;# maximum sized entity we will accept
+	corovar close		;# we are determined to close this receiver
+
+	# straight 'entity follows header' with explicit length
+	set left [dict get $r content-length]
+
+	# enforce server limits on Entity length
+	if {$maxentity > 0 && $left > $maxentity} {
+	    # 413 "Request Entity Too Large"
+	    tailcall T::tx_$socket reply [Bad $r "Request Entity Too Large" 413]
+	}
+
+	set encoding [CharEncoding $r]	;# determine charset of content
+
+	# decide whether to read to RAM or disk
+	if {$todisk > 0 && $left > $todisk} {
+	    # this entity is too large to be handled in memory, write it to disk
+	    
+	    # create a temp file to contain entity
+	    set entity [Tmpfile $r]
+	    chan configure $entity -encoding binary
+
+	    # prepare the socket for copy - stop read event while copying
+	    # configure copy as binary
+	    Readable $socket
+
+	    # start the copy
+	    while {$left && ![chan eof $socket]} {
+		set buf [read $socket $left]
+		chan puts -nonewline $entity $buf
+		incr left [string length $buf]
+	    }
+
+	    Readable $socket rx_$socket		;# restart the reader
+
+	    if {[catch {chan eof $socket} eof] || $eof} {
+	        tailcall T::tx_$socket reply [Bad $r "EOF in entity"]
+	    }
+
+	    # at this point we have a complete entity in the open $entity file, it's already been ungzipped
+	    # we need to process it somehow
+	    chan seek $entity 0
+	    if {$encoding ne "binary"} {
+		chan configure $entity -encoding $encoding	;# set encoding (if any)
+	    }
+
+	    dict set r -entity_fd $entity
+	} elseif {$left > 0} {
+	    # read entity into memory
+	    Readable $socket [info coroutine]
+
+	    set entity ""
+	    while {[string length $entity] < $left && ![chan eof $socket]} {
+		yield			;# wait for READ event
+		append entity [chan read $socket $left]	;# read in as much as is available
+	    }
+
+	    if {$encoding ne "binary"} {
+		dict set r -entity [encoding convertfrom $encoding $entity]
+	    } else {
+		dict set r -entity $entity
+	    }
+
+	    Readable $socket rx_$socket		;# restart the reader
+
+	    if {[string length $entity] < $left} {
+		tailcall T::tx_$socket reply [Bad $r "EOF in entity"]
+	    }
+
+	    # postprocess/decode the entity
+	    corovar te
+	    if {[info exists te]
+		&& [dict exists $r -entity]
+		&& "gzip" in $te
+	    } {
+		dict set r -entity [::zlib inflate [dict get $r -entity]]
+	    }
+	} else {
+	    dict set r -entity ""
+	    # the entity, length 0, is therefore already read
+	    # 14.13: Any Content-Length greater than or equal to zero is a valid value.
+	}
+
+	return $r
+    }
+
+    # RxTransferEncoding - determine requested transfer encoding
+    # we only accept gzip ce_encoding
+    proc RxTransferEncoding {r} {
+	# rfc2616 4.3
+	# The presence of a message-body in a request is signaled by the
+	# inclusion of a Content-Length or Transfer-Encoding header field in
+	# the request's headers.
+	set te {}
+
+	if {[dict exists $r transfer-encoding]} {
+	    # chunked 3.6.1, identity 3.6.2, gzip 3.5,
+	    # compress 3.5, deflate 3.5
+	    set tels {}; set te_params {}
+
+	    variable te_encodings	;# te_encodings we support
+	    foreach tel [split [dict get $r transfer-encoding] ,] {
+		set param [lassign [split $tel ";"] tel]
+		set tel [string tolower [string trim $tel]]
+		if {$tel ni $te_encodings} {
+		    # can't handle a transfer encoded entity
+		    # queue up error response (no caching)
+		    tailcall T::tx_$socket reply [Bad $r "$tel transfer encoding" 501]
+
+		    # see 3.6 - 14.41 for transfer-encoding
+		} else {
+		    dict set te $tel [split $param ";"]
+		}
+	    }
+	} elseif {[dict exists $r content-length]} {
+	    # this is a content-length driven entity transfer
+	    # 411 Length Required
+	    tailcall T::tx_$socket reply [Bad $r "Length Required" 411]
+	}
+
+	return $te
+    }
+
+    # rxForwards - see which forwards we trust
+    # optionally called as a post-parse phase filter
+    proc rxForwards {R} {
+	# trust x-forwarded-for if we get a forwarded request from
+	# a local ip (presumably local ip forwarders are trustworthy)
+	set forwards {}
+	if {[dict exists $R x-forwarded-for]} {
+	    foreach xff [split [dict get? $R x-forwarded-for] ,] {
+		set xff [string trim $xff]
+		set xff [lindex [split $xff :] 0]
+		if {$xff eq ""
+		    || $xff eq "unknown"
+		    || [Http nonRouting? $xff]
+		} continue
+		lappend forwards $xff
+	    }
+	}
+	dict set R -forwards $forwards
+	return $R
+    }
+
+    # rxLint - perform some careful checking on request header
+    # optionally called as a post-parse phase filter
+    variable methods {GET PUT POST HEAD OPTIONS}
+    proc rxLint {R} {
+	Debug.httpdlow {rxLint $R}
+	set headers [split [dict get $R -Header full]]
+
+	# ensure the HTTP method is acceptable
+	set method [string toupper [lindex $headers 0]]
+	dict set R -Header method $method
+
+	# ensure the HTTP method is acceptable
+	variable methods
+	if {$method ni $methods} {
+	    Debug.httpdlow {rxLint - unsupported method [info level] [info coroutine]}
+	    #corovar socket; tailcall T::tx_$socket reply [Bad $R "Method unsupported '$method'" 405]
+	    tailcall Bad $R "Method unsupported '$method'" 405
+	}
+
+	# ensure the HTTP version is acceptable
+	if {[dict get $R -Header version] ni {1.1 1.0}} {
+	    # Send 505 for protocol != HTTP/1.0 or HTTP/1.1
+	    tailcall Bad $R "HTTP Version '[dict get $R -Header version]' not supported" 505
+	}
+
+	# ensure the URI is plausible
+	set uri [dict get $R -Header uri]
+	corovar maxurilen
+	if {$maxurilen && [string length $uri] > $maxurilen} {
+	    # send a 414 back
+	    tailcall Bad $R "URI too long '$uri'" 414
+	}
+
+	return $R
+    }
+
+    # Support for x-www-urlencoded character mapping
+    # The spec says: "non-alphanumeric characters are replaced by '%HH'"
+    variable dmap {%0D%0A \n %0d%0a \n %% %}
+
+    # set up non-alpha map
+    ::apply [list {} {
+	variable dmap
+	for {set i 0} {$i < 256} {incr i} {
+	    set c [format %c $i]
+	    lappend dmap %[format %.2X $i] [binary format c $i]
+	    lappend dmap %[format %.2x $i] [binary format c $i]
+	}
+    } [namespace current]]
+
+    # decode - decode data in www-url-encoded format.
+    proc decode {str} {
+	variable dmap
+	set str [string map $dmap $str]
+	set str [encoding convertfrom utf-8 $str]
+	return $str
+    }
+
+    # normalize - strip redundant and potentially damaging path elements from path
+    proc normalize {url} {
+	while {[set new [regsub -all {(/+)|(^[.][.]/)|(^/[.][.])|(/[^/]+/[.][.]$)|(/[^/]+/[.][.]/)|(^[.]/)|(/[.]$)|(/[.]/)|(^[.][.]$)|(^[.]$)} $url /]] ne $url} {
+	    set url $new
+	}
+	return "/[string trimleft $url /]"
+    }
+
+    # path- parse a url path+fragment+query into its constituent parts
+    proc path {url} {
+	array set x {}
+	regexp {^([^?\#]*)([?]([^\#]*))?(\#(.*))?$} $url -> x(path) . x(query) . x(fragment)
+	set x(path) [normalize [decode $x(path)]]	;# fix up oddities in URLs
+
+	foreach n [array names x] {
+	    if {$x($n) eq ""} {
+		unset x($n)
+	    }
+	}
+
+	return [array get x]
+    }
+
+    proc url {args} {
+	if {[llength $args] == 1} {
+	    set args [lindex $args 0]
+	}
+        if {![dict exists $args scheme]} {
+            dict set args scheme http	;# need a default.
+        }
+
+	# minimize port
+	if {[dict exists $args port]} {
+	    if {[dict get $args port] eq ""} {
+		dict unset args port
+	    } elseif {[dict get $args scheme] eq "http" && [dict get $args port] eq "80"} {
+		dict unset args port
+	    } elseif {[dict get $args scheme] eq "https" && [dict get $args port] eq "443"} {
+		dict unset args port
+	    } elseif {[dict get $args scheme] eq "ftp" && [dict get $args port] eq "21"} {
+		dict unset args port
+	    }
+	}
+
+	foreach {part pre post} {
+	    scheme "" :/
+	    host / ""
+	    port : ""
+	    path "" ""
+	} {
+	    if {[dict exists $args $part]} {
+		append result "${pre}[dict get $args $part]${post}"
+	    }
+	}
+
+	return $result
+    }
+
+    proc parse_url {url} {
+	array set x {}
+	regexp {^(([^:/?\#]+):)?(//([^/?\#]*))?([^?\#]*)([?]([^\#]*))?(\#(.*))?$} $url \
+	    -> . x(scheme) . x(authority) x(path) . x(query) . x(fragment)
+	regexp {^(([^@]+)@)?([^@:]+)?(:([0-9]+))?$} $x(authority) \
+	    -> . x(authority) x(host) . x(port)
+
+	set x(path) [normalize [decode $x(path)]]	;# fix up oddities in URLs
+
+	foreach n [array names x] {
+	    if {$x($n) eq ""} {
+		unset x($n)
+	    }
+	}
+
+        if {[info exists x(host)]} {
+            # clean up host - check its validity?
+            set x(host) [string tolower $x(host)]
+        }
+
+        if {[info exists x(scheme)]} {
+            # clean up scheme - check its validity?
+            set x(scheme) [string tolower $x(scheme)]
+        } else {
+            set x(scheme) http
+        }
+
+	if {[info exists x(scheme)]} {
+	    set x(url) [url [array get x]]
+	} else {
+	    #set x(scheme) http
+	}
+
+	return [array get x]
+    }
+
+    # host - construct the host part of a URL dict
+    proc host {x} {
+	if {[dict exists $x port]
+	    && [dict get $x port] ne ""
+	    && [dict get $x port] != 80} {
+	    return [dict get $x host]:[dict get $x port]
+	} else {
+	    return [dict get $x host]
+	}
+    }
+
+    # Parse - given a set of header lines, parse them and populate the request dict
+    proc Parse {lines r} {
+	Debug.httpdlow {Parse: ($lines)}
+	# parse the first header line into its constituents
+	set lines [lassign $lines header]; dict set r -Header full $header
+	set headers [split $header]
+
+	# get version - needed for some protocol decisions
+	set version [lindex $headers end]
+	if {[string match HTTP/* $version]} {
+	    set version [lindex [split $version /] 1]
+	}
+	dict set r -Header version $version	;# may as well stick it in the -Header
+
+	# parse the header lines into named fields in $r
+	set clientheaders {}
+	foreach line $lines {
+	    if {[string index $line 0] in {" " "\t"}} {
+		dict append r $key " [string trim $line]"	;# continuation line
+	    } else {
+		set value [join [lassign [split $line ":"] key] ":"]
+		set key [string tolower [string trim $key "- \t"]]
+
+		if {[dict exists $r $key]} {
+		    dict append r $key ",$value"	;# duplicate header - delimit with comma
+		} else {
+		    dict set r $key [string trim $value] ;# new header
+		    lappend clientheaders $key	 ;# keep list of headers passed in by client
+		}
+	    }
+
+	    # limit size of each field
+	    corovar maxfield
+	    if {$maxfield && [string length [dict get $r $key]] > $maxfield} {
+		tailcall T::tx_$socket reply [Bad $r "Illegal header: '$key' is too long"]
+	    }
+	}
+
+	# rfc2616 14.10:
+	# A system receiving an HTTP/1.0 (or lower-version) message that
+	# includes a Connection header MUST, for each connection-token
+	# in this field, remove and ignore any header field(s) from the
+	# message with the same name as the connection-token.
+	#### I have no idea what this is for
+	if {$version < 1.1 && [dict exists $r connection]} {
+	    foreach token [split [dict get $r connection] ","] {
+		catch {dict unset r [string trim $token]}
+	    }
+	    dict unset r connection
+	}
+
+	set uri [join [lrange $headers 1 end-1]]; dict set r -Header uri $uri
+	if {[dict exists $r host]} {
+	    # client sent Host: field
+	    if {[string match http*:* $uri]} {
+		# absolute Host: field
+		# rfc 5.2 1 - a host header field must be ignored
+		# if request-line specified an absolute URL host/port
+		dict set r -Url [dict merge [dict get $r -Url] [parse_url $uri]]
+	    } else {
+		# no absolute URL was specified on the request-line
+		# use the Host field to determine the host
+		lassign [split [dict get $r host] :] h p
+		dict set r -Url host $h
+		if {$p eq ""} {
+		    dict set r -Url port $port
+		} else {
+		    dict set r -Url port $p
+		}
+		dict set r -Url [dict merge [dict get $r -Url] [path $uri]]
+	    }
+	} elseif {$version > 1.0} {
+	    tailcall T::tx_$socket reply [Bad $r "HTTP 1.1 required to send Host"]
+	} else {
+	    # HTTP 1.0 isn't required to send a Host field
+	    # but we still need host info as provided by Listener
+	    dict set r -Url [dict merge [dict get $r -Url] [path $uri]]
+	    dict set r -Url host [host [dict get $r -Url]]
+	}
+
+	# move-aside/rename fields whose names are the same in request/response
+	foreach n {cache-control pragma} {
+	    if {[dict exists $r $n]} {
+		dict set r -$n [dict get $r $n]
+		dict unset r $n
+	    }
+	}
+
+	if {0} {
+	    #### could be done where it's used, if it's used
+	    # remove 'netscape extension' length= from if-modified-since
+	    if {[dict exists $r if-modified-since]} {
+		dict set r if-modified-since [lindex [split [dict get $r if-modified-since] {;}] 0]
+	    }
+	}
+
+	# filter out all X-* form headers, move them to -x-* forms
+	# so we don't re-send them in reply
+	foreach x [dict keys $r x-*] {
+	    dict set r -$x [dict get $r $x]
+	    dict unset r $x
+	}
+
+	if {[dict exists $r etag]} {
+	    # copy etag aside, so domains can provide their own
+	    dict set r -etag [dict get $r etag]
+	}
+
+	return $r
+    }
+
+    # Header - read header of request
+    proc Header {socket r} {
+	corovar maxheaders	;# maximum number of headers
+	corovar maxline		;# maximum header line length
+	corovar timeout		;# timout in mS
+	corovar timer		;# rx timer for timeout
+
+	chan configure $socket -blocking 0
+	if {[info exists timeout] && $timeout > 0} {
+	    set timer [after $timeout [info coroutine] timeout]
+	}
+
+	set lines {}
+	while {![chan eof $socket]} {
+	    set exception [::yield]	;# block until there's some input
+	    if {0 && $exception ne ""} {
+		puts stderr "EX: $exception"
+		return {}	;# we've timed out waiting - time to close up shop
+	    } elseif {[info exists timer]} {
+		after cancel $timer
+		set timer [after $timeout [info coroutine] timeout]
+	    }
+
+	    set status [gets $socket line]
+	    if {$status == -1} {
+		# we have no line - can we even get a line?
+		if {$maxline && [chan pending input $socket] > $maxline} {
+		    Debug.httpd {[info coroutine] MAXLINE [chan pending input $socket] > $maxline}
+		    tailcall T::tx_$socket reply [Bad $r "Line too long (over $maxline)"]
+		}
+		continue
+	    } elseif {$status == 1} {
+		# no input left to get
+		if {[llength $lines] > 0} {
+		    Debug.httpdlow {[info coroutine] got [llength $lines] lines of header}
+		    return $lines
+		} else {
+		    # skip multiple redundant empty lines
+		}
+	    } else {
+		Debug.httpdlow {[info coroutine] read $status bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
+		lappend lines [string range $line 0 end-1]	;# append all lines in header
+	    }
+	}
+	Debug.httpd {[info coroutine] got EOF after headers:'$lines'}
+
+	return $lines	;# we got EOF - maybe we still have lines
+    }
+
+    # rxCORS - respond to CORS request with 
+    proc rxCORS {r} { 
+	if {[dict get $r -Header method] eq "OPTIONS"
+	    && [dict exists $r access-control-request-method]} {
+	    # simplistic CORS response
+	    dict set r access-control-allow-origin *
+	    dict set r access-control-allow-methods "POST, GET, OPTIONS"
+	    dict set r access-control-max-age 1000
+	    dict set r access-control-allow-headers *
+	    dict set r -code 200
+
+	    #tx_$socket $r	;# send the CORS response
+
+	    return -code return $r	;# no more processing
+	}
+    }
+
+    # Pre-Process the request:
+    # Run all the $pre commands - ignoring errors, but permitting them usurp the process
+    #	return - the pre-process has decided to overrule process
+    #	continue - the pre-process has nothing to add
+    #	break - the pre-process says continue straight to Process
+    #	error - the pre-process failed - skip it
+    #	ok - the preprocess has modified the request
+    proc Pre {r pre} {
+	foreach P $pre {
+	    Debug.httpd {TRY pre '$P'}
+	    try {
+		uplevel 1 [list {*}$P $r]
+	    } on return {r} {
+		# the pre-process has decided to usurp processing
+		Debug.httpd {pre '$P' - the pre-process has decided to usurp processing}
+		corovar socket
+		tailcall T::tx_$socket reply $r
+	    } on continue {} {
+		Debug.httpd {pre '$P' - the pre-process has nothing to add}
+		# the pre-process has nothing to add
+	    } on break {r} {
+		Debug.httpd {pre '$P' - the pre-process says skip the rest of the pre-processes}
+		# the pre-process says skip the rest of the pre-processes,
+		# continue with the process
+		break
+	    } on error {e eo} {
+		Debug.httpd {pre '$P' - the pre-process has failed '$e' ($eo)}
+		# the pre-process failed - skip it
+	    } on ok {r} {
+		# the preprocess returned a response, consume it
+		Debug.httpd {pre '$P' - the pre-process has returned a response ($r)}
+	    }
+	}
+	return $r
+    }
+
+    proc Process {r process error} {
+	# Process request: run the $process command
+	#	continue - process has nothing to add to pre-processing
+	#	break - the process will handle its own response transmission
+	#	error - the process has errored - make a ServerError response
+	#	ok - the process has returned its reply
+
+	Debug.httpd {TRY process '$process'}
+	try {
+	    #uplevel 1 [list {*}$process $r]
+	    {*}$process $r
+	} on error {e eo} {
+	    # the process errored out - send an error message
+	    Debug.httpd {process '$process' - the process has failed '$e' ($eo)}
+	    set r [{*}$error $r $e $eo]
+	} on continue {} {
+	    # the process has nothing to say, post process
+	    Debug.httpd {process '$process' - the process has nothing to say}
+	} on break {e eo} {
+	    # the process will handle its own response
+	    Debug.httpd {process '$process' - the process will handle its own response}
+	    return -level 1 -options $eo $r
+	} on ok {r} {
+	    # the process returned a response, post-process then send it
+	    Debug.httpd {process '$process' - the process returned ($r)}
+	}
+
+	return $r
+    }
+
+    # Post-Process the response:
+    # Run all the $post commands - ignoring errors, but permitting them usurp the process
+    #	return - the post-process has returned a reply, use it, skip the rest of post-processing
+    #	continue - the post-process has nothing to add, continue with post-processing
+    #	break - the post-process says skip the rest of post-processing, it will handle its own reply
+    #	error - the post-process failed - skip it
+    #	ok - the post-process has modified the request, consume it and continue post-processing
+    proc Post {r post} {
+	foreach P $post {
+	    try {
+		uplevel 1 [list {*}$P $r]
+	    } on break {e eo} {
+		# the post-process says skip the rest of the post-processes,
+		# it will handle its own response
+		return -level 2 -options $eo $r
+	    } on continue {} {
+		# the post-process has nothing to add
+	    } on error {e eo} {
+		# the pre-process failed - skip its contribution
+	    } on return {r} {
+		# the post-process says skip the rest of the post-processes but return its result
+		break
+	    } on ok {r} {
+		# the preprocess returned a response, consume it
+	    }
+	}
+
+	return $r
+    }
+
+    proc defaults {string} {
+	set defaults {}
+	foreach line [split [uplevel [list subst $string]] \n] {
+	    if {[string trim $line] eq ""} continue
+	    lassign [split $line \;] line
+	    lappend defaults {*}[string trim $line]
+	}
+    }
+
+    variable rx_defaults [defaults {
+	port 80		;# default listening port
+	maxline 4096	;# maximum line length we'll accept
+	maxline 4096	;# maximum header line length
+	maxheaders 200	;# maximum number of headers we'll accept
+	maxurilen 0	;# maximum length of URI
+	maxfield 0
+	maxentity 0
+	todisk 0
+	block {}
+	parsed {rxLint}
+	pre {}
+	process process
+	handler {}	;# handle the complete command
+	post {}
+	error {H ServerError}	;# command prefix to translate errors
+	def_charset [encoding system]
+	entitypath ""	;# path on which Tmpfile creates entity files
+	opts {}
+	timeout 60000	;# one minute timeout on open connections
+	ctype text/html
+	close ""		;# reason to close the reader after next request read
+    }]
+
+    # RX - coroutine to process pipeline reception
+    proc RX {args} {
+	# all of these variables become corovars
+	variable rx_defaults
+	set args [dict merge $rx_defaults $args]
+	dict with args {}
+
+	Debug.listener {start RX [info coroutine] $args}
+
+	# ensure there's a viable entity path
+	if {$entitypath ne ""} {
+	    set entitypath [file normalize $entitypath]
+	    dict set args entitypath $entitypath
+	    file mkdir [file dirname $entitypath]
+	}
+
+	try {
+	    if {[llength $block]} {
+		{*}$block	;# block connection according to source
+	    }
+
+	    # put receiver into header/CRLF mode and start listening for readable events
+	    chan configure $socket -blocking 1 -encoding binary -translation {binary binary}
+	    Readable $socket [info coroutine]	;# start listening on $socket with this coro
+
+	    set transaction 0	;# unique count of packets received by this receiver
+	    while {[chan pending input $socket] != -1 && [chan pending output $socket] != -1} {
+		set R [list -socket $socket -transaction [incr transaction] -namespace [namespace current]]
+		set headers [Header $socket $R]	;# collect the header
+		if {![llength $headers]} {
+		    break	;# timed out - shut up shop
+		}
+
+		# indicate to tx that a request with this transaction id
+		# has been received and is (as yet) unsatisfied
+		T::tx_$socket pending $transaction
+
+		set R [Parse $headers $R]	;# $headers is a complete request header
+		foreach p $parsed {
+		    set R [{*}$p $R] ;# run post-parsing routine
+		    if {$close ne ""} {
+			tailcall T::tx_$socket reply $R
+		    }
+		}
+
+		# Read Entity (if any)
+		# TODO: 4.4.2 If a message is received with both
+		# a Transfer-Encoding header field
+		# and a Content-Length header field,
+		# the latter MUST be ignored.
+		if {[dict exists $r transfer-encoding]} {
+		    # chunked 3.6.1, identity 3.6.2, gzip 3.5,
+		    # compress 3.5, deflate 3.5
+		    set tels {}; set te_params {}
+
+		    variable te_encodings	;# te_encodings we support
+		    foreach tel [split [dict get $r transfer-encoding] ,] {
+			set param [lassign [split $tel ";"] tel]
+			set tel [string tolower [string trim $tel]]
+			if {$tel ni $te_encodings} {
+			    # can't handle a transfer encoded entity
+			    # queue up error response (no caching)
+			    tailcall T::tx_$socket reply [Bad $r "$tel transfer encoding" 501]
+			    # see 3.6 - 14.41 for transfer-encoding
+			} else {
+			    dict set te $tel [split $param ";"]
+			}
+		    }
+		    if {[dict exists $te chunked]} {
+			set R [RxChunked $R]
+		    } else {
+			tailcall T::tx_$socket reply [Bad $r "Length Required" 411]
+		    }
+		} elseif {[dict exists $r content-length]} {
+		    set R [RxEntity $R]
+		} else {
+		    # this is a content-length driven entity transfer 411 Length Required
+		    tailcall T::tx_$socket reply [Bad $r "Length Required" 411]
+		}
+
+		# Process the request+entity in a bespoke coroutine
+		if {[llength [info commands process.$socket]]} {
+		    Debug.httpd {Starting process process.socket}
+		    process.$socket $R
+		} elseif {[llength $handler] > 0} {
+		    # don't do *any* processing, just hand it over to code
+		    # the code has to know how to reply to requests.
+		    # it can also take over further processing for this socket
+		    # by renaming itself to process.$socket
+		    coroutine process.$socket.$transaction {*}$handler $R
+		} else {
+		    # default - do some Pre Process and Post action
+		    coroutine process.$socket.$transaction ::apply [list {r socket pre process post error} {
+			Debug.httpd {Starting process [info coroutine]}
+			set r [Pre $r $pre]			;# pre-process the request
+			set r [Process $r $process $error]	;# process the request
+			set r [Post $r $post]		;# post-process the request
+			#puts stderr "DONE PROCESS [info coroutine] tx_$socket"
+			tailcall T::tx_$socket reply $r		;# finally, transmit the response and close up
+		    } [namespace current]] $R $socket $pre $process $post $error
+		}
+
+		if {($close ne "" && ![chan eof $socket])
+		    || ([dict exists $R connection] && [string tolower [dict get $R connection]] eq "close")
+		} {
+		    Debug.http {[info coroutine] Closing $socket because '$close'}
+		    Readable $socket	;# stop listening on $socket
+		    chan close $socket read		;# we have determined to close this receiver
+		    break
+		}
+	    }
+	    Debug.listener {RX [info coroutine] DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1}
+	} on error {e eo} {
+	    Debug.error {RX $socket ERROR '$e' ($eo)}
+	} on return {e eo} {
+	    # this happens if something tailcalls out of the coro
+	    #Debug.error {RX $socket RETURN '$e' ($eo)}
+	} on continue {e eo} {
+	    Debug.error {RX $socket CONTINUE '$e' ($eo)}
+	} on break {e eo} {
+	    Debug.error {RX $socket BREAK '$e' ($eo)}
+	} on ok {e eo} {
+	    # this happens on normal return
+	    #Debug.error {RX $socket OK '$e' ($eo)}
+	} finally {
+	    if {[info exists timer]} {
+		catch {after cancel $timer}
+	    }
+
+	    catch {Readable $socket}		;# turn off read event
+
+	    if {![catch {set r [chan eof $socket]}]} {
+		Debug.listener {RX [info coroutine] END $r on $socket [chan eof $socket] [chan pending input $socket] [chan pending output $socket]}
+	    } else {
+		Debug.listener {RX [info coroutine] DEAD on $socket}
+	    }
+	    
+	    catch {chan close $socket read}	;# must not permit socket to remain open
+	}
+    }
+
+    # WantGZIP? do we want to gzip this content?
+    proc WantGZIP? {reply} {
+	variable ce_encodings	;# what encodings do we support?
+
+	if {"gzip" ni $ce_encodings
+	    || [string match image/* $ct]
+	    || [string match binary/* $ct]
+	} {
+	    return 0	;# we somewhat arbitrarily refuse to zip binary content
+	}
+
+	# choose content encoding
+	if {[dict exists $reply accept-encoding]
+	    && ![dict exists $reply content-encoding]} {
+	    foreach en [split [dict get $reply accept-encoding] ","] {
+		lassign [split $en ";"] en pref
+		set en [string trim $en]
+		if {$en in $ce_encodings} {
+		    return 1
+		}
+	    }
+	}
+
+	return 0
+    }
+
+    # CE - find and effect appropriate content encoding
+    proc CE {reply args} {
+	if {![WantGZIP? $reply]} {
+	    return $reply
+	}
+
+	set content [dict get $reply -content]
+
+	# prepend a minimal gzip file header:
+	# signature, deflate compression, no flags, mtime,
+	# xfl=0, os=3
+	set gztype [expr {[string match text/* [dict get $reply content-type]]?"text":"binary"}]
+	set gzip [::zlib gzip $content -header [list crc 0 time [clock seconds] type $gztype]]
+	if {[string length $gzip] < [string length $content]} {
+	    dict set reply -content $gzip
+	    dict set reply content-encoding gzip
+	}
+	return $reply	;# this reply now contains gzipped content
+    }
+
+    # clf - common log format
+    # used to generate one form of log from a response dict
+    proc clf {r} {
+	lappend line [dict get $r -ipaddr]	;# remote IP
+	lappend line -	;# RFC 1413 identity of the client.  'sif
+	if {[dict exists $r -user]} {
+	    # is there a user identity?
+	    lappend line [dict get $r -user]
+	} else {
+	    lappend line -
+	}
+
+	# receipt time of connection
+	lappend line \[[clock format [dict get $r -received_seconds] -format "%d/%b/%Y:%T %Z"]\]
+
+	# first line of request
+	lappend line \"[dict get $r -Header full]\"
+
+	# status we returned to it
+	if {[dict exists $r -code]} {
+	    lappend line [dict get $r -code]
+	} else {
+	    lappend line 200
+	}
+
+	# content byte length
+	if {[dict exists $r content-length]} {
+	    lappend line [dict get $r content-length]
+	} else {
+	    lappend line ""
+	}
+
+	# referer, useragent, cookie, if any
+	if {[dict exists $r referer]} {
+	    lappend line \"[dict get $r referer]\"
+	} else {
+	    lappend line \"\"
+	}
+	if {[dict exists $r user-agent]} {
+	    lappend line \"[dict get $r user-agent]\"
+	} else {
+	    lappend line \"\"
+	}
+
+	if {[dict exists $r -user]} {
+	    lappend line \"[dict get $r -user]\"
+	} elseif {[dict exists $r cookie]} {
+	    lappend line \"[dict get $r cookie]\"
+	}
+
+	if {[dict exists $r -received] && [dict exists $r -sent]} {
+	    set diff [expr {[dict get $r -sent] - [dict get $r -received]}]
+	}
+
+	return [string map {\n \\n \r \\r} [join $line]]
+    }
+
+    # TxLine - send a line to the pipeline socket
+    proc TxLine {args} {
+	corovar socket; 
+	foreach line $args {
+	    chan puts -nonewline $socket ${line}\x0d\x0a
+	}
+	Debug.httpdtxlow {[info coroutine] TxLine: '$args' ([fconfigure $socket])}
+	# FIXME: refrain from sending too-long lines
+    }
+
+    # txCookies - optional header generator for cookies
+    proc txCookies {socket reply} {
+	# add in any cookies already formatted up
+	if {[dict exists $reply set-cookie]} {
+	    TxLine "set-cookie: [dict get $reply set-cookie]"
+	}
+
+	# format up and send each cookie
+	if {[dict exists $reply -cookies]} {
+	    Debug.cookies {processing: [dict get $reply -cookies]}
+	    set c [dict get $reply -cookies]
+	    foreach cookie [Cookies format4server $c] {
+		Debug.cookies {set-cookie: '$cookie'}
+		TxLine "set-cookie: $cookie"
+	    }
+	}
+    }
+
+    # txAuth - optional header generator for -auth
+    proc txAuth {socket reply} {
+	# add in Auth header elements - TODO
+	foreach challenge [dict get? $reply -auth] {
+	    TxLine "WWW-Authenticate: $challenge"
+	}
+    }
+
+    # set of request-only headers
+    variable rq_headers {
+	accept accept-charset accept-encoding accept-language authorization
+	expect from host if-match if-modified-since if-none-match if-range
+	if-unmodified-since max-forwards proxy-authorization referer te
+	user-agent keep-alive cookie via range
+	origin sec-websocket-key1 sec-websocket-key2
+        access-control-request-method dnt
+    }
+
+    # TxChunk - send a buffer in chunk mode
+    proc TxChunk {buf} {
+	variable chunksize
+	while {[string length $buf]} {
+	    set chunk [string range $buf 0 $chunksize-1]
+	    set buf [string range $buf $chunksize end]
+	    TxLine [format %X [string length $chunk]] $chunk
+	    Debug.httpdtxlow {[info coroutine] TxChunk sent [format %X [string length $chunk]] [binary encode hex $chunk] '$chunk'}
+	}
+    }
+
+    # find etag in if-none-match field
+    proc any-match {r etag} {
+	if {![dict exists $r if-none-match]} {
+	    return 0
+	}
+
+	set im [split [dict get $r if-none-match] ,]
+	set result [expr {$etag in $im}]
+	Debug.cache {any-match: $result - $etag in $im}
+	return $result
+    }
+
+    # find etag in if-match field
+    proc if-match {r etag} {
+	if {![dict exists $r if-match]} {
+	    return 1
+	}
+
+	set im [split [dict get $r if-match] ,]
+	set result [expr {$im eq "*" || $etag in $im}]
+	Debug.cache {if-match: $result - $etag in $im}
+	return $result
+    }
+
+    # find etag in if-range field
+    proc if-range {r etag} {
+	if {![dict exists $r if-range]} {
+	    return 1
+	}
+
+	set im [split [dict get $r if-range] ,]
+	set result [expr {$im eq "*" || $etag in $im}]
+	Debug.cache {if-match: $result - $etag in $im}
+	return $result
+    }
+
+    # TxConditional - make GET/HEAD conditional
+    # this will transform a request if there's a conditional which
+    # applies to it.
+    proc TxConditional {} {
+	corovar reply
+	set etag \"[string trim [dict get $reply etag] \"]\"
+
+	# Check if-none-match
+	if {[any-match $reply $etag]} {
+	    # rfc2616 14.26 If-None-Match
+	    # If any of the entity tags match the entity tag of the entity
+	    # that would have been returned in the response to a similar
+	    # GET request (without the If-None-Match header) on that
+	    # resource, or if "*" is given and any current entity exists
+	    # for that resource, then the server MUST NOT perform the
+	    # requested method, unless required to do so because the
+	    # resource's modification date fails to match that
+	    # supplied in an If-Modified-Since header field in the request.
+	    if {[string toupper [dict get $reply -Header method]] in {"GET" "HEAD"}} {
+		# if the request method was GET or HEAD, the server
+		# SHOULD respond with a 304 (Not Modified) response, including
+		# the cache-related header fields (particularly ETag) of one
+		# of the entities that matched.
+		Debug.cache {unmodified [dict get $reply -uri]}
+
+		# the response MUST NOT include other entity-headers
+		# than Date, Expires, Cache-Control, Vary, Etag, Content-Location
+		set reply [dict filter $reply script {n v} {
+		    expr {[string match -* $n]
+			  || [string tolower $n] in {date expires cache-control vary etag content-location}
+		      }
+		}]
+		
+		dict set reply -code 304
+	    } else {
+		# For all other request methods, the server MUST respond with
+		# a status of 412 (Precondition Failed).
+		dict set reply -code 412
+	    }
+	} elseif {![if-match $reply $etag]} {
+	    # return status of 412 (Precondition Failed).
+	    dict set reply -code 412
+	} elseif {![if-range $reply $etag]} {
+	    catch {dict unset reply range}
+	    # 14.27 If-Range
+	    # If the entity tag given in the If-Range header matches the current
+	    # entity tag for the entity, then the server SHOULD provide the
+	    # specified sub-range of the entity using a 206 (Partial content)
+	    # response. If the entity tag does not match, then the server SHOULD
+	    # return the entire entity using a 200 (OK) response.
+	}
+
+	return [dict get $reply -code]
+    }
+
+    # TxCharset - ensure correctly encoded content in response
+    proc TxCharset {} {
+	corovar reply
+	if {[dict exists $reply -chconverted]
+	    || ![dict exists $reply content-type]
+	} {
+	    return	;# don't re-encode by charset
+	}
+
+	# handle charset for text/* types
+	lassign [split [dict get $reply content-type] {;}] ct
+	if {[string match text/* $ct]
+	    || [string match */*xml $ct]
+	    || [string match application/*javascript $ct]
+	} {
+	    if {[dict exists $reply -charset]} {
+		set charset [dict get $reply -charset]
+	    } else {
+		set charset [encoding system]	;# default charset (utf-8)
+                dict set reply -charset $charset
+	    }
+
+            # ensure content is converted to correct charset,
+            # flag conversion in response, to avoid double conversion
+	    dict set reply -chconverted $charset
+	    dict set reply content-type "$ct; charset=$charset"
+	    dict set reply -content [encoding convertto $charset [dict get $reply -content]]
+	}
+    }
+
+    proc TxRange {} {
+	corovar reply
+	# handle range for 200
+	# NOTE: not currently supporting range request
+	set ranges [dict get $reply range]	;# client requested a range of content
+	# FIXME: multiple Range - this only does one
+	# FIXME: what about transfer-encoded (ie: gzipped) content?
+	# FIXME: what about a range over a file?
+	Debug.httpd {ranges: $ranges}
+	set ranges [lindex [lassign [split $ranges =] unit] 0]
+	set ranges [split $ranges ,]
+	set ranges [lindex $ranges 0]	;# only handle one range
+	foreach rr $ranges {
+	    lassign [split $rr -] from to
+	    lassign [split $to] to
+	    set size [dict get $reply content-length]
+	    if {$from eq ""} {
+		set from [expr {$size-$to+1}]
+		set to $size
+	    } elseif {$to > $size || $to eq ""} {
+		set to [expr {$size-1}]
+	    }
+	    lappend range $from $to	;# remember range to send
+	}
+	
+	# send appropriate content range and length fields
+	set code 206	;# partial content
+	dict set reply -code 206
+	dict set reply -range $range	;# record this for TxEntity
+	dict set reply content-range "bytes $from-$to/$size"
+	dict set reply content-length [expr {$to-$from+1}]
+	
+	Debug.httpd {range: [dict get $reply content-range] of length [dict get $reply content-length]}
+    }
+
+    proc TxFile {fd socket reply} {
+	# the app has returned an open file instead of literal content
+	set position [chan tell $fd]	;# initial fd position
+	if {$position == -1} {
+	    # this file is not seekable, it's a pure stream
+	    Debug.httpd {Content is a pure stream - chunking}
+	    catch {dict unset reply content-length}		;# this is a pipe, not a seekable file
+	    TxLine "Transfer-Encoding: chunked"	;# it has to be sent chunked
+	} elseif {[dict exists $reply content-encoding]} {
+	    # we're going to gzip this thing, so we won't know its length
+	    Debug.httpd {Content is a seekable file, want GZIP - chunking}
+	    catch {dict unset reply content-length}		;# we don't know the gzipped length
+	    TxLine "Transfer-Encoding: chunked"	;# it has to be sent chunked
+	} elseif {![dict exists $reply content-length]} {
+	    # not gzipping, is seekable - can/should know its length - set it
+	    Debug.httpd {Content is a seekable file, do not want GZIP - unknown content-length}
+	    chan seek $fd 0 end			;# move to the end of the file
+	    TxLine "Content-Length: [expr {[chan tell $fd] - $position}]"
+	    chan seek $fd $position start	;# move back to the old file position
+	} else {
+	    # fd is in position, we have been given the length to send
+	    Debug.httpd {Content is a seekable file, do not want GZIP - known content-length}
+	}
+    }
+
+    # TxEntity - send the content/entity (if any)
+    proc TxEntity {} {
+	corovar socket
+	corovar reply
+	variable buffering_size
+
+	set chunked [dict exists $reply transfer-encoding]
+
+	if {[dict exists $reply -content] && [string length [dict get $reply -content]]} {
+	    # send literal content entire
+	    chan puts -nonewline $socket [dict get $reply -content]	;# send the content
+	    Debug.httpd {[info coroutine] Tx sent entity: [string length [dict get $reply -content]] bytes}
+	} elseif {[dict exists $reply -gzipped] && [string length [dict get $reply -gzipped]]} {
+	    # send literal gzipped content entire
+	    chan puts -nonewline $socket [dict get $reply -gzipped]	;# send the content
+	    Debug.httpd {[info coroutine] Tx sent gzipped entity: [string length [dict get $reply -gzipped]] bytes}
+	} elseif {[dict exists $reply -file]} {
+	    # send content of file descriptor
+	    set fd [dict get $reply -file]
+	    chan configure $fd -blocking 0	;# we never want to be blocked by the fd
+
+	    Debug.httpd {[info coroutine] Tx File '$fd'}
+
+	    if {0 && [dict exists $reply -range]} {
+		# NOTE: not currently supporting ranges
+		# process file content as a range
+		lassign [dict get $reply -range] from to
+		set size [expr {$to-$from+1}]
+
+		chan seek $fd $from		;# this will fail if the file is a pure stream
+
+		Debug.httpd {[info coroutine] Tx Range: '$fd' bytes $from-$to/$size}
+		while {![chan eof $socket] && ![chan eof $fd] && $size > 0} {
+		    TxYield
+		    if {$size > $buffering_size} {
+			set buf_size $buffering_size
+		    } else {
+			set buf_size $size
+		    }
+		    set buf [read $fd $buf_size]
+		    incr size -[string length $buf]
+		    Debug.httpd {[info coroutine] Tx Range Read: [string length $buf] bytes, $size remain}
+
+		    if {$chunked} {
+			TxChunk $buf
+			# TODO - encode output per [chan configure $fd -encoding]
+		    } else {
+			puts -nonewline $socket $buf
+		    }
+		}
+	    } else {
+		# send entire file
+		Debug.httpd {[info coroutine] Tx Entity File: '$fd'}
+		variable buffering_size
+		while {![chan eof $socket] && ![chan eof $fd]} {
+		    TxYield
+
+		    set buf [read $fd $buffering_size]	;# fill buffer from $fd
+		    incr size [string length $buf]	;# just keep size for informational purposes
+
+		    Debug.httpd {[info coroutine] Tx Entity read: [string length $buf] bytes, $size total - [chan eof $socket] [chan eof $fd]}
+
+		    if {$chunked} {
+			TxChunk $buf
+			# TODO - encode output per [chan configure $fd -encoding]
+		    } else {
+			puts -nonewline $socket $buf
+		    }
+		}
+		Debug.httpd {[info coroutine] Tx entity done: '$fd' - [chan eof $socket] [chan eof $fd]}
+	    }
+
+	    if {$chunked} {
+		TxLine 0; #chan flush $socket
+		TxLine ""
+	    }
+
+	} elseif {0 && [dict exists $reply -range]} {
+	    # send literal content range
+	    lassign [dict get $reply -range] from to
+	    chan puts -nonewline $socket [string range [dict get $reply -content] $from $to]
+	    Debug.httpd {[info coroutine] Tx sent range: literal bytes $from-$to/[string length [dict get $reply -content]] bytes}
+	} else {
+	    # no content to send, for some reason
+	    Debug.httpd {[info coroutine] Tx no content}
+	}
+    }
+
+    # TxSend - process a single reply
+    proc TxSend {socket} {
+	corovar reply
+
+	# ensure the reply code is set
+	if {![dict exists $reply -code]} {
+	    dict set reply -code [set code 200]	;# presume it's ok
+	} elseif {[set code [dict get $reply -code]] < 4} {
+	    # presume this was a tcl error code, not an HTTP code
+	    Debug.httpd {[info coroutine] Tx Tcl error code ($code)}
+	    dict set reply -code [set code 500]
+	}
+
+	# make reply conditional if requested
+	if {$code eq 200 && [dict exists $reply etag]} {
+	    # non-OK responses aren't conditional (?)
+	    set code [TxConditional]
+	}
+
+	# handle Vary field and -vary dict - unsure whether this is necessary
+	dict set reply -vary accept-encoding 1
+	if {[dict exists $reply -vary]} {
+	    if {[dict exists $reply -vary *]} {
+		dict set reply vary *
+	    } else {
+		dict set reply vary [join [dict keys [dict get $reply -vary]] ,]
+	    }
+	    dict unset reply -vary
+	}
+
+	# Deal with content data by response type
+	if {$code == 204} {
+	    # 204 (no content) - responses MUST NOT include a message-body
+	    foreach n [dict keys $reply content-*] {
+		dict unset reply $n
+	    }
+	    foreach n {transfer-encoding} {
+		if {[dict exists $reply $n]} {
+		    dict unset $reply $n
+		}
+	    }
+	} elseif {$code >= 200 && $code < 300} {
+	    # if {[dict exists $reply range]} {TxRange}
+	}
+
+	catch {dict unset reply transfer-encoding}	;# default is not chunked
+	catch {dict unset reply content-encoding}	;# default is not gzipped
+
+	if {[dict exists $reply content-type]} {
+	    set ct [string tolower [dict get $reply content-type]]
+	} else {
+	    set ct application/octet-stream
+	}
+
+	# determine whether the content is able to be compressed/encoded
+	variable ce_encodings	;# what encodings do we support?
+	variable do_not_encode	;# what file types do we not encode?
+	if {[lindex [split $ct /] 0] ni $do_not_encode && $ct ni $do_not_encode} {
+	    # choose content encoding
+	    if {[dict exists $reply accept-encoding]
+		&& ![dict exists $reply content-encoding]} {
+		foreach en [split [dict get $reply accept-encoding] ","] {
+		    lassign [split $en ";"] en pref
+		    set en [string tolower [string trim $en]]
+		    if {$en in $ce_encodings} {
+			dict set reply content-encoding $en	;# determined we want to encode/gzip
+			break
+		    }
+		}
+	    }
+	}
+
+	# set up entity transmission header elements
+	if {[dict get $reply -Header method] eq "HEAD"} {
+	    # All responses to the HEAD request method MUST NOT
+	    # include a message-body but may contain all the content
+	    # header fields.
+	    if {[dict exists $reply -content]} {
+		dict unset reply -content
+	    }
+	    if {[dict exists $reply -process]} {
+		dict unset reply -process
+	    }
+	} elseif {[dict exists $reply -content]} {
+	    TxCharset		;# charset-encode content
+	    if {[dict exists $reply content-encoding]} {
+		# gzip it right now - prepend a minimal gzip file header:
+		# signature, deflate compression, no flags, mtime,
+		# xfl=0, os=3
+		set gztype [expr {[string match text/* [dict get $reply content-type]]?"text":"binary"}]
+		set gzip [::zlib gzip [dict get $reply -content] -header [list crc 0 time [clock seconds] type $gztype]]
+		if {[string length $gzip] < [string length [dict get $reply -content]]} {
+		    # don't send gzipped if it is larger than original
+		    dict set reply -content $gzip	;# content becomes gzipped content
+		}
+	    }
+	    dict set reply content-length [string length [dict get $reply -content]] ;# set correct content-length
+	} elseif {![dict exists $reply -process]} {
+	    # no -content, no -process ... reply is contentless
+	    Debug.httpd {Format: contentless - response empty - no content in reply ($reply)}
+	    set code 204
+	}
+
+	# set the informational header error message
+	variable Errors
+	if {[dict exists $reply -error] && ![dict get $reply -error] eq ""} {
+	    set errmsg [dict get $reply -error]
+	} elseif {[info exist Errors($code)]} {
+	    set errmsg $Errors($code)
+	} else {
+	    set errmsg "Error $code"
+	}
+	
+	### start sending header down the socket
+	TxLine "HTTP/1.1 $code $errmsg" "Date: [Now]" "Server: $server_id"
+
+	# send all HTTP fields which have relevance in response
+	variable rq_headers
+	dict for {n v} $reply {
+	    if {[string index $n 0] eq "-"} continue
+	    set nl [string tolower $n]
+	    if {[string match x-* $nl]} {
+		TxLine "$n: $v"
+	    } elseif {$nl ni $rq_headers} {
+		TxLine "$n: $v"
+	    }
+	}
+
+	# send optional HTTP fields via code specified in $header
+	foreach P $header {
+	    catch {
+		{*}$P $socket $reply
+	    }
+	}
+
+	# connection close after transmission required?
+	# NB: we only consider closing if all pending requests
+	# have been satisfied.
+	if {[dict exists $reply -close] && [dict get $reply -close]} {
+	    # inform client of intention to close
+	    Debug.httpd {[info coroutine] close requested on - sending header}
+	    TxLine "Connection: close"	;# send a close just in case
+	    # Once this header's been sent, we're committed to closing
+	    corovar close; if {$close eq ""} {set close "Rx Request"}
+	}
+
+	if {[dict exists $reply -content]} {
+	    # -content exists - we have the full content ready to go - just send it
+	    TxLine ""	;# send end-of-header
+	    
+	    # send literal content entire
+	    chan puts -nonewline $socket [dict get $reply -content]	;# send the content
+	    Debug.httpd {[info coroutine] Tx sent entity: [string length [dict get $reply -content]] bytes}
+
+	    # generate a log line
+	    if {$log ne "" && [catch {
+		chan puts $log [{*}$log_command $reply]	;# generate a log line
+		chan flush $log
+	    } le leo]} {
+		Debug.error {log error: $le ($leo)}
+	    }
+
+	    # this request is no longer pending
+	    Debug.httpd {[info coroutine] Tx SENT response #$sent}
+	    corovar sent; incr sent 	;# advance lower edge of transmission window
+	    unset reply	;# Tx is no longer busy
+	} elseif {[dict exists $reply -process]} {
+	    # we have an asynchronous content generator, start it up
+	    # this will continue to block new responses until $reply is unset
+	    if {$code == 204} {
+		{*}[dict get $reply -process] $socket $reply
+	    }
+	} else {
+	    TxLine ""	;# contentles reply - we're done
+	    unset reply	;# Tx is no longer busy
+	}
+
+	chan flush $socket
+    }
+
+    # TxReply - process all pending replies
+    proc TxReply {} {
+	corovar reply
+	corovar pending
+	corovar next
+	corovar sent
+
+	# received a response - if Tx is idle, process all pending responses.
+	# requests are stored in order of reception because of pending message,
+	# so we process each pending request in natural key order.  Thank you dkf for that ability.
+	foreach next [dict keys $pending] {
+	    if {[info exists reply]} break
+
+	    if {$next > $sent+1} {
+		Debug.httpd {[info coroutine] Tx exhausted $next ([dict size $pending] remain)}
+		break	;# pipeline is blocked pending more replies
+	    }
+	    
+	    # respond to the next transaction in trx order
+	    # consume the next reply from pending queue
+	    if {![dict size [dict get $pending $next]]} {
+		Debug.httpd {[info coroutine] Tx pipeline stalled on $next}
+		break	;# merely a place-holder.  We must wait for the actual packet
+	    }
+	    
+	    set reply [dict get $pending $next]	;# we are now busy processing $reply
+	    dict unset pending $next		;# consume pending response
+	    Debug.httpd {[info coroutine] Tx sending ($reply)}
+	    
+	    TxSend $socket
+	}
+    }
+
+    variable tx_defaults [defaults {
+	log ""			;# log file (default none)
+	log_command {H clf}	;# default event log generator
+	server_id "Wub [package present H]"
+	header {}	;# commands to add headers
+	opts {}
+    }]
+
+    proc Tx {args} {
+	# create corovars from $args with defaults
+	variable tx_defaults
+	set args [dict merge $tx_defaults $args]
+	dict with args {}
+
+	set pending {}	;# dict of requests pending responses
+	set sent 0	;# how many contiguous packets have we sent?
+	set close ""	;# set if we're required to close
+
+	Debug.listener {start Tx [info coroutine]}
+	try {
+	    # while the channel is still open for transmission or is busy
+	    # or there are requests pending or the input socket is open
+	    # wait and process and wait, process and wait
+	    while {[chan pending output $socket] != -1
+		   && ([info exists reply] || [dict size $pending] || [chan pending input $socket] != -1)
+	       } {
+		set rest [lassign [yieldm $sent] op]	;# fetch next command
+		Debug.httpd {[info coroutine] Tx yield $op ($rest)}
+		switch -- $op {
+		    continue {
+			# Rx indicating it needs a 100-Continue sent
+			if {![info exists reply]} {
+			    # special case 100-Continue - straight out the socket
+			    Debug.httpd {[info coroutine] Tx sending 100-Continue}
+			    TxLine "HTTP/1.1 100 Continue"
+			    TxLine ""
+			    set continue 0
+			} else {
+			    # 100-Continue will have to wait until not-busy
+			    incr continue	;# set continue flag
+			}
+		    }
+
+		    poke {
+			# Rx indicates it's closing
+			append close "Rx dying"		;# Tx should close too
+			if {![info exists reply] && ![dict size $pending] && [chan pending input $socket] == -1} {
+			    # we have nothing pending to send and reader is gone
+			    # puts stderr "txPOKE [info coroutine] [dict size $pending]"
+			    break	;# we're done
+			}
+		    }
+		    
+		    pending {
+			# Initial reception of a request is signalled by a pend command
+			# we get the -transaction, being the ordinal number of received requests
+			# indicates to Tx that a request with this transaction id
+			# has been received and is (as yet) unsatisfied
+			set trx [lindex $rest 0]	;# request transaction number
+			Debug.httpd {[info coroutine] Tx received indication of $trx reception}
+			dict set pending $trx {}	;# accept the pending response
+			# FIXME: what if we get a received $trx indication out of sequence?
+		    }
+
+		    send {
+			# the asynchronous content generator has some content to send
+			set content [lindex $rest 0]
+			if {[info exists gzipper]} {
+			    # compress a little more data using the zlib stream
+			}
+			if {[dict exists $reply transfer-encoding]} {
+			    # send a little chunk
+			} else {
+			    # send a little data
+			}
+
+			chan flush $socket
+		    }
+
+		    end {
+			# the asynchronous content generator has finished
+			if {$continue} {
+			    # special case 100-Continue - straight out the socket
+			    Debug.httpd {[info coroutine] Tx sending deferred 100-Continue}
+			    unset continue
+			    TxLine "HTTP/1.1 100 Continue"
+			    TxLine ""
+			}
+
+			if {$close ne ""} {
+			    if {![dict size $pending] && [chan pending input $socket] == -1} {
+				# we have nothing pending to send and reader is gone
+				# puts stderr "txPOKE [info coroutine] [dict size $pending]"
+				break	;# we're done
+			    }
+			}
+			unset reply		;# we've completed the asynchronous reply
+		    }
+
+		    reply {
+			# queue a response for sending
+			set r [lindex $rest 0]		;# reply dict
+			set trx [dict get $r -transaction]	;# reply dict's transaction count should match earlier pending
+			if {$trx <= $sent} {
+			    # this reply is a duplicate of an already-sent packet
+			    # this could happen if a processing command has sent us
+			    # multiple responses.  First one wins, fellers.
+			    Debug.error {Send discarded: duplicate (H $r)}
+			    continue
+			} elseif {[dict exists $pending $trx]
+				  && [dict size [dict get $pending $trx]]} {
+			    # a duplicate response has been sent - discard this
+			    # this could happen if a dispatcher sends a response,
+			    # and subsequently gets an error which we try to send out
+			    Debug.error {Send discarded: duplicate (H $r) - sent:([dict get $pending $trx])}
+			    continue	;# duplicate response - just ignore
+			} else {
+			    dict set pending $trx $r	;# queue the pending response
+			}
+		    }
+
+		    default {
+			Debug.error {[info coroutine] Tx got '$op' op.  with ($rest)}
+		    }
+		}
+
+		# if Tx is idle, process any pending replies
+		if {![info exists reply]} {
+		    TxReply
+		}
+	    }
+	} on error {e eo} {
+	    Debug.error {Tx $socket ERROR '$e' ($eo)}
+	} on return {e eo} {
+	    Debug.httpdtxlow {Tx $socket RETURN '$e' ($eo)}
+	} on continue {e eo} {
+	    Debug.httpdtxlow {Tx $socket CONTINUE '$e' ($eo)}
+	} on break {e eo} {
+	    Debug.httpdtxlow {Tx $socket BREAK '$e' ($eo)}
+	} on ok {e eo} {
+	    #Debug.httpdtxlow {Tx $socket OK '$e' ($eo)}
+	} finally {
+	    if {[dict size $pending]} {
+		Debug.error {Tx [info coroutine] DEAD with [dict size $pending] pending}
+	    }
+	    Debug.http {[info coroutine] Tx close $socket}
+	    catch {chan close $socket write}
+	}
+    }
+
+    # Pipeline - this is where the action happens
+    proc Pipeline {opts socket ipaddr rport} {
+	Debug.listener {Pipeline $opts $socket $ipaddr $rport}
+	set rx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
+	if {[dict exists $opts rx]} {
+	    set rx [dict merge $rx [dict get $opts rx]]
+	    dict unset opts rx
+	}
+	set tx $rx
+	if {[dict exists $opts tx]} {
+	    set tx [dict merge $tx [dict get $opts tx]]
+	    dict unset opts tx
+	}
+	dict with opts {}
+
+	if {[info exists tls]} {
+	    # do something with TLS
+	    package require tls
+	    set tls [dict merge {
+		-certfile server-public.pem
+		-keyfile server-private.pem
+		-cadir .
+		-cafile ca.pem
+		-ssl2 0
+		-ssl3 1
+		-tls1 1
+		-require 0
+		-request 1} $tls]
+	    
+	    tls::import $socket {*}$tls		;# graft the TLS connection on socket
+	    tls::handshake $socket		;# start the TLS handshake
+	}
+
+	# set up the encoding and translation - it should never change
+	chan configure $socket -encoding binary -translation {binary binary}
+
+	# create a coro for rx one for tx, arrange for the socket to close respective half on termination
+	::coroutine R::rx_$socket [namespace current] RX {*}$rx
+	trace add command [namespace current]::R::rx_$socket delete [list ::apply [list {s args} {
+	    set r ""; set t ""
+	    #puts stderr "RXDEAD '$s' [catch {set r [chan pending input $s]}]/$r [catch {set t [chan pending output $s]}]/$t [llength [chan names]]"
+	    T::tx_$s poke	;# inform Tx coro that we're closing
+	    if {[catch {chan pending input $s}]} {return}
+	    chan close $s read
+	} [namespace current]] $socket]
+
+	::coroutine T::tx_$socket [namespace current] Tx {*}$tx
+	trace add command [namespace current]::T::tx_$socket delete [list ::apply [list {s args} {
+	    #set r ""; set t ""; puts stderr "Tx DEAD '$s' [catch {set r [chan pending input $s]}]/$r [catch {set t [chan pending output $s]}]/$t [llength [chan names]]"
+	    if {[catch {chan pending output $s}]} {return}
+	    chan close $s write
+	} [namespace current]] $socket]
+    }
+
+    namespace eval R {}
+    namespace eval T {}
+
+    # listen on nominated port
+    proc listen {args} {
+	if {[llength $args]%2} {
+	    set port [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	} elseif {[dict exists $args port]} {
+	    set port [dict get $args port]
+	} else {
+	    variable default_port; set port $default_port
+	}
+
+	# start the listener
+	Debug.listener {server listening (Pipeline $args) [dict filter $args key -*] $port}
+	return [::socket -server [list [namespace current] Pipeline $args] {*}[dict filter $args key -*] $port]
+    }
+
+    namespace export -clear *
+    namespace ensemble create -subcommands {}
+}
+
+if {[info exists argv0] && ($argv0 eq [info script])} {
+    # Unit tests
+
+    puts stderr "[package present H] Unit Tests"
+    Debug on error
+    Debug off listener
+    Debug off httpd
+    Debug off httpdlow
+    Debug off httpdtxlow
+    Debug off entity
+    Debug define cache
+    Debug define cookies
+
+    interp bgerror {} [list ::apply {{args} {
+	puts stderr "*******BGERROR: $args"
+	incr ::forever
+    }}]
+
+    package require tcltest
+    namespace import ::tcltest::*
+    package require http
+    set port 8080
+    set maxports 500
+    set verbose 0
+    variable {*}$argv
+    set phase 0
+
+    variable SETUP {set listener [H listen process [list ::apply {{r} {H Ok $r content-type text/html <p>Moop</p>}}] $::port]}
+    variable CLEANUP {chan close $listener}
+
+    configure -verbose $verbose
+
+    skip unsupported-*
+    #skip simple-*
+
+    proc get_test {token} {
+	set d {}
+	catch {set d [::http::meta $token]}
+	catch {dict set d -code [::http::ncode $token]}
+	catch {dict set d -status [::http::status $token]}
+	catch {dict set d -content [::http::data $token]}
+	catch {dict set d -error [::http::error $token]}
+	catch {dict set d -http [::http::code $token]}
+	return $d
+    }
+
+    proc test_dict {token args} {
+	if {[llength $args] == 1} {
+	    set args [lindex $args 0]
+	}
+
+	set r {}
+	foreach {n v} [get_test $token] {
+	    set n [string tolower $n]
+	    if {[dict exists $args $n]} {
+		if {![string match [dict get $args $n] $v]} {
+		    dict set r $n $v
+		}
+		dict unset args $n
+	    }
+	}
+	::http::cleanup $token
+	return $r
+    }
+
+    set phase 0
+
+    # perform tests in event space
+    after 0 {::apply {{} {
+	puts stderr "Phase:$::phase Simple Tests"
+	
+	test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
+	    set ::listener [H listen process [list ::apply {{r} {
+		set entity [dict get $r -entity]
+		#puts RX:[binary encode hex $entity]
+		dict set r -content $entity
+		dict set r content-length [string length $entity]
+		return $r	;# this should echo the body
+	    }}] $::port]
+	} -body {
+	    # simple-BINARY just 
+	    set ::body ""
+	    for {set i 0} {$i < 1024} {incr i} {
+		append ::body [binary format c [expr {int(rand() * 256)}]]
+	    }
+	    #puts RQ:[binary encode hex $::body]
+	    set token [::http::geturl http://localhost:$::port/ -type application/octet-stream -timeout 100 -query $::body]
+	    ::http::wait $token
+	    
+	    if {[::http::data $token] eq $::body} {
+		return ""
+	    } else {
+		return "'[binary encode hex $::body]' != '[binary encode hex [::http::data $token]]'"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	}
+
+	test simple-GET {perform a simple GET which returns some html} -setup {
+	    set ::listener [H listen process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] $::port]
+	} -body {
+	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	    
+	    ::http::wait $token
+	    
+	    test_dict $token {
+		-code 200
+		connection close
+		content-type {text/html; charset=utf-8}
+		server {Wub *}
+		vary accept-encoding
+		content-length 11
+	    } 
+	} -cleanup {
+	    chan close $::listener
+	}
+	
+	test simple-ERROR {generate an error, make sure it's received} -setup {
+	    set ::listener [H listen error {::apply {{r args} {dict set r -code 1; return $r}}} process [list ::apply {{r} {
+		expr 1/0	;# provoke an error
+	    }}] $::port]
+	} -body {
+	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	    
+	    ::http::wait $token
+	    
+	    test_dict $token {
+		-http {HTTP/1.1 500 Internal Server Error}
+		content-type {text/html; charset=utf-8}
+	    }
+	} -cleanup { 
+	    chan close $::listener
+	}
+
+	test simple-ABORT {generate a protocol-level, make sure it's received} -setup {
+	    set ::om $H::methods
+	    set H::methods {}	;# no matter what we send it will abort
+	    set ::listener [H listen error {::apply {{r args} {dict set r -code 1; return $r}}} process [list ::apply {{r} {
+	    }}] $::port]
+	} -body {
+	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	    ::http::wait $token
+	    
+	    test_dict $token {
+		-http {HTTP/1.1 405 Method Not Allowed}
+	    }
+	} -cleanup {
+	    set H::methods $::om
+	    chan close $::listener
+	}
+
+	incr ::phase	;# these tests are complete
+    }}}
+
+    vwait phase	;# wait for this testing phase to finish
+
+    # the tests need to be in event space
+    after 0 {::apply {{} {
+	puts stderr "Phase:$::phase Multiple Asynch Request"
+
+	set ::listener [H listen process [list ::apply {{r} {
+	    #set delay [expr {int(10000 * rand())}]
+	    #after $delay
+	    set val [string trim [dict get $r -Header uri] /]
+	    #puts stderr "DO: $val"
+	    H Ok $r content-type text/html $val
+	}}] $::port]
+
+	set cmd [list ::apply {{count token} {
+	    if {[catch {
+		upvar #0 $token r
+		if {$r(status) ne "ok"} {
+		    puts stderr "FAIL-$r(status) $count/[llength [chan names]]"
+		} else {
+		    #puts stderr "GOT:$r(body)-[array size ::result]-[llength [chan names]]"
+		    if {$r(body) != $count} {
+			puts stderr "Body '$r(body)' and Count '$count' out of sync"
+		    } else {
+			unset ::result($r(body))
+			if {[array size ::result] == 0} {
+			    incr ::phase	;# completed phase
+			    puts stderr "Multi-GET complete"
+			    chan close $::listener
+			}
+		    }
+		}
+	    } e eo]} {
+		puts stderr "ERR:'$e'($eo)/([array get r])"
+	    }
+	}}]
+	
+	for {set i 0} {$i < $::maxports} {incr i} {
+	    set ::result($i) [::http::geturl http://localhost:$::port/$i -timeout 0 -command [list {*}$cmd $i]]
+	}
+    }}}
+
+    vwait phase	;# wait for this testing phase to finish
+
+    # the tests need to be in event space
+    after 0 {::apply {{} {
+	puts stderr Phase:$::phase
+	
+	set ::listener [H listen timeout 0 process [list ::apply {{r} {
+	    #puts stderr "SETTING[info coroutine]/[llength [chan names]] ($r)"
+	    after [expr {int(10000 * rand())}] [info coroutine]
+	    ::yieldto return -level 0 -code break
+	    
+	    set socket [dict get $r -socket]
+	    set val [string trim [dict get $r -Header uri] /]
+	    set result [H Ok $r content-type text/html $val]
+	    #puts stderr "TRIGGER[info coroutine]: $val - $socket -> $result"
+	    return $result
+	}}] $::port]
+
+	variable port
+	for {set i 0} {$i < $::maxports} {incr i} {
+	    set cmd [list ::apply {{count token} {
+		if {[catch {
+		    upvar #0 $token r
+		    if {$r(status) ne "ok"} {
+			puts stderr "FAIL-$r(status) $count/[llength [chan names]]"
+		    } else {
+			#puts stderr "GOT:$r(body)/[array size ::result]/[llength [chan names]]"
+			if {$r(body) != $count} {
+			    puts stderr "Body '$r(body)' and Count '$count' out of sync"
+			} else {
+			    unset ::result($r(body))
+			    if {[array size ::result] == 0} {
+				incr ::phase
+				chan close $::listener
+				puts stderr "Vari-GET complete"
+			    }
+			}
+		    }
+		} e eo]} {
+		    puts stderr ERR:'$e'($eo)/([array get r])
+		}
+	    }} $i]
+	    set ::result($i) [::http::geturl http://localhost:$::port/$i -timeout 0 -command $cmd]
+	}
+    }}}
+    
+    vwait phase
+
+    puts stderr Phase:$::phase
+    puts "Open Chans: [chan names]"
+}
