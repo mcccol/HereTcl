@@ -560,7 +560,7 @@ proc Rx {args} {
 
 	    set headers [Header $socket $R 1]	;# collect the first line
 	    if {![string match HTTP/* [lindex [split $headers " "] end]]} {
-		Bad $R "This isn't HTTP"
+		Bad $R "This isn't even HTTP"
 	    }
 
 	    set R [RxHeaders $R $headers]	;# fetch all remaining headers
