@@ -107,8 +107,8 @@ after 0 {::apply {{} {
     if {1} {
 	test simple-GET-with-timeout {test 1 second timeout} -setup {
 	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
-		upvar #1 close close
-		set ::rxtimeout $close
+		upvar #1 eo eo
+		set ::rxtimeout [dict get $eo -errorcode]
 	    }}}} process [list ::apply {{r} {
 		H Ok $r content-type text/html <p>Moop</p>
 	    }}] {*}$::defaults $::port]
@@ -129,8 +129,8 @@ after 0 {::apply {{} {
     if {1} {
 	test simple-GET-with-timeout2 {test 1 second entity timeout} -setup {
 	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
-		upvar #1 close close
-		set ::rxtimeout $close
+		upvar #1 eo eo
+		set ::rxtimeout [dict get $eo -errorcode]
 	    }}}} process [list ::apply {{r} {
 		H Ok $r content-type text/html <p>Moop</p>
 	    }}] {*}$::defaults $::port]

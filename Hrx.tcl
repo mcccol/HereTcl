@@ -95,7 +95,7 @@ proc HeaderCheck {r} {
 	}
     } elseif {$version > 1.0} {
 	Debug.httpdlow {Host field required: $r}
-	corovar tx; tailcall $tx reply [Bad $r "HTTP 1.1 required to send Host"]
+	Bad $r "HTTP 1.1 required to send Host"
     } else {
 	# HTTP 1.0 isn't required to send a Host field
 	# but we still need host info as provided by Listener
@@ -213,10 +213,7 @@ proc RxWait {where} {
 
     if {$exception ne ""} {
 	Debug.httpd {Exception '$exception' from '$from' in $where}
-
-	corovar close
-	lappend close $exception $from
-	return 1
+	return -code error -errorcode [list $exception $from] "$exception from $from"
     } else {
 	return 0
     }
@@ -231,16 +228,13 @@ proc Header {socket r {one 0}} {
 
     set lines ""
     while {![chan eof $socket]} {
-	if {[RxWait Header]} {
-	    break
-	}
-
+	RxWait Header
 	set status [gets $socket line]
 	if {$status == -1} {
 	    # we have no line - can we even get a line?
 	    if {$maxline && [chan pending input $socket] > $maxline} {
 		Debug.httpd {[info coroutine] MAXLINE [chan pending input $socket] > $maxline}
-		corovar tx; tailcall $tx reply [Bad $r "Line too long (over $maxline)"]
+		Bad $r "Line too long (over $maxline)"
 	    }
 	    continue
 	} elseif {$status == 1} {
@@ -266,7 +260,7 @@ proc Header {socket r {one 0}} {
 
 # ChunkSize - return the next chunk size
 proc ChunkSize {socket} {
-    if {[RxWait ChunkSize]} {return -1}
+    RxWait ChunkSize
     Readble $socket			;# turn off readable event
 
     set chunk_extra [join [lassign [split [string range [gets $socket] 0 end-1] \;] cs] \;]
@@ -280,7 +274,6 @@ proc RxChunked {r} {
     corovar socket		;# connection to client
     corovar todisk		;# the size at which we elect to leave entities on disk
     corovar maxentity	;# maximum sized entity we will accept
-    corovar close		;# we are determined to close this receiver
 
     # get size of next chunk
     set chunksize [ChunkSize $socket]	;# how many bytes to read?
@@ -300,13 +293,13 @@ proc RxChunked {r} {
     while {$chunksize > 0} {
 	if {$maxentity > 0 && ($total+$chunksize) > $maxentity} {
 	    # 413 "Request Entity Too Large"
-	    corovar tx; tailcall $tx reply [Bad $r "Request Entity Too Large ($maxentity)"]
+	    Bad $r "Request Entity Too Large ($maxentity)"
 	}
 
 	# prepare the socket for copy
 	Readable $socket [info coroutine]
 	while {![chan eof $socket] && ![error $socket]} {
-	    if {[RxWait RxChunked]} {return -1}
+	    RxWait RxChunked
 
 	    set buf [chan read $socket $chunksize]
 	    chan puts -nonewline $entity $buf
@@ -316,7 +309,7 @@ proc RxChunked {r} {
 	}
 
 	if {[catch {chan eof $socket} eof] || $eof} {
-	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
+	    Bad $r "EOF in entity"
 	}
 
 	set chunksize [ChunkSize $socket]	;# how big is next chunk?
@@ -360,7 +353,6 @@ proc RxSizedEntity {r} {
     corovar socket	;# socket for pipeline
     corovar todisk	;# size at which we leave entities on disk
     corovar maxentity	;# maximum sized entity we will accept
-    corovar close	;# we are determined to close this receiver
 
     # simple 'entity follows header' with explicit length
     set left [dict get $r content-length]
@@ -370,7 +362,7 @@ proc RxSizedEntity {r} {
     # enforce server limits on Entity length
     if {$maxentity > 0 && $left > $maxentity} {
 	# 413 "Request Entity Too Large"
-	corovar tx; tailcall $tx reply [Bad $r "Request Entity Too Large" 413]
+	Bad $r "Request Entity Too Large" 413
     }
 
     set encoding [CharEncoding $r]	;# determine charset of content
@@ -394,7 +386,7 @@ proc RxSizedEntity {r} {
 	}
 
 	if {[catch {chan eof $socket} eof] || $eof} {
-	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
+	    Bad $r "EOF in entity"
 	}
 
 	# at this point we have a complete entity in the open $entity file, it's already been ungzipped
@@ -412,7 +404,7 @@ proc RxSizedEntity {r} {
 
 	set entity ""
 	while {[string length $entity] < $left && ![chan eof $socket]} {
-	    if {[RxWait RxSizedEntity]} {return $r}
+	    RxWait RxSizedEntity
 	    append entity [chan read $socket [expr {$left - [string length $entity]}]]	;# read in as much as is available
 	}
 
@@ -425,7 +417,7 @@ proc RxSizedEntity {r} {
 	}
 
 	if {[string length $entity] < $left} {
-	    corovar tx; tailcall $tx reply [Bad $r "EOF in entity"]
+	    Bad $r "EOF in entity"
 	}
 
 	# postprocess/decode the entity
@@ -464,7 +456,7 @@ proc RxEntity {R} {
 	    if {$tel ni $te_encodings} {
 		# can't handle a transfer encoded entity
 		# queue up error response (no caching)
-		[dict get $R -tx] reply [Bad $R "$tel transfer encoding" 501]
+		Bad $R "$tel transfer encoding" 501
 		return {}
 		# see 3.6 - 14.41 for transfer-encoding
 	    } else {
@@ -475,15 +467,13 @@ proc RxEntity {R} {
 	if {[dict exists $te chunked]} {
 	    set R [RxChunked $R]
 	} else {
-	    [dict get $R -tx] reply [Bad $R "Length Required" 411]
-	    return {}
+	    Bad $R "Length Required" 411
 	}
     } elseif {[dict exists $R content-length]} {
 	set R [RxSizedEntity $R]
     } elseif {0} {
 	# this is a content-length driven entity transfer 411 Length Required
-	[dict get $R -tx] reply [Bad $R "Length Required" 411]
-	return {}
+	Bad $R "Length Required" 411
     }
     state_log {R rx entity [dict get $R socket] $transaction}
 
@@ -515,10 +505,6 @@ proc RxDead {coro s tx args} {
 proc RxHeaders {R headers} {
     set socket [dict get $R -socket]
     set all [Header $socket $R]	;# collect all remaining headers
-    if {$all eq ""} {
-	# TODO - distinguish singleton from timeout
-	return ""	;# must have timed out - shut up shop
-    }
 
     append headers $all
 
@@ -555,7 +541,6 @@ proc Rx {args} {
 	file mkdir [file dirname $entitypath]
     }
 
-    set close ""	;# reason to close the reader after next request read
     set headers {}
     set transaction 0	;# unique count of packets received by this receiver
     set R {}
@@ -574,21 +559,22 @@ proc Rx {args} {
 	    state_log {R rx request $socket $transaction}
 
 	    set headers [Header $socket $R 1]	;# collect the first line
-	    if {$headers eq ""} {
-		break	;# must have timed out - shut up shop
-	    }
-
 	    set R [RxHeaders $R $headers]	;# fetch all remaining headers
 	    set R [RxEntity $R]			;# fetch any entity
-	    if {![dict size $R} {
-		break	;# must have timed out - shut up shop
-	    }
 
 	    process $R	;# Process the request+entity in a bespoke command
 	    state_log {R rx processed $socket $transaction}
 	}
-
+    } trap HTTP {e eo} {
+	state_log {R rx http $socket $transaction}
+	Debug.httpd {Httpd $e}
+	set close [dict get $eo -errorcode]
+    } trap TIMEOUT {e eo} {
+	state_log {R rx timeout $socket $transaction}
+	Debug.httpd {Httpd $e}
+	set close [dict get $eo -errorcode]
     } on error {e eo} {
+	state_log {R rx error $socket $transaction}
 	Debug.error {Rx $socket ERROR '$e' ($eo)}
     } on return {e eo} {
 	# this happens if something tailcalls out of the coro (?)
@@ -599,7 +585,7 @@ proc Rx {args} {
 	Debug.error {Rx $socket BREAK '$e' ($eo)}
     } on ok {e eo} {
 	# this happens on normal return
-	#Debug.error {Rx $socket OK '$e' ($eo)}
+	Debug.httpd {Normal Termination}
     } finally {
 	if {[info exists timer]} {
 	    catch {::after cancel $timer}; unset timer
@@ -613,6 +599,7 @@ proc Rx {args} {
 
 	state_log {"" rx closed $socket $transaction}
     }
+
     if {[info exists ondisconnect]} {
 	{*}$ondisconnect [info coroutine] [info locals]
     }

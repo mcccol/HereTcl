@@ -137,7 +137,9 @@ namespace eval H {
 	corovar close; set close $message	;# this will cause the reader to close
 	dict set rsp -content <p>[H armour $message]</p>
 	dict set rsp -code $code
-	return [NoCache $rsp]
+	set rsp [NoCache $rsp]
+	[dict get $rsp -tx] reply $rsp
+	return -code error -errorcode [list HTTP $code] $message
     }
 
     # DateInSeconds - convert HTTP date to Tcl time
