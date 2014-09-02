@@ -13,6 +13,7 @@ Debug off httpdtxlow
 Debug off entity
 Debug define cache
 Debug define cookies
+Debug define httpdchan
 
 interp bgerror {} BGERROR
 proc BGERROR {args} {
@@ -79,27 +80,80 @@ set phase 0
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Simple Tests"
     
-    test simple-GET {perform a simple GET which returns some html} -setup {
-	set ::listener [H listen process [list ::apply {{r} {
-	    H Ok $r content-type text/html <p>Moop</p>
-	}}] {*}$::defaults $::port]
-    } -body {
-	set token [::http::geturl http://localhost:$::port/ -timeout 100]
-	
-	::http::wait $token
-	
-	test_dict $token {
-	    -code 200
-	    connection close
-	    content-type {text/html; charset=utf-8}
-	    server {H *}
-	    vary accept-encoding
-	    content-length 11
-	} 
-    } -cleanup {
-	chan close $::listener
+    if {1} {
+	test simple-GET {perform a simple GET which returns some html} -setup {
+	    set ::listener [H listen process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	    
+	    ::http::wait $token
+	    
+	    test_dict $token {
+		-code 200
+		connection close
+		content-type {text/html; charset=utf-8}
+		server {H *}
+		vary accept-encoding
+		content-length 11
+	    } 
+	} -cleanup {
+	    chan close $::listener
+	}
     }
-    
+
+
+    if {1} {
+	test simple-GET-with-timeout {test 1 second timeout} -setup {
+	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
+		upvar #1 close close
+		set ::rxtimeout $close
+	    }}}} process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    try {
+		set waiter [::socket localhost $::port]	;# now do nothing
+		vwait ::rxtimeout
+		close $waiter
+		set ::rxtimeout
+	    } on error {e eo} {
+		puts stderr "ERR: $e ($eo)"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	} -result {TIMEOUT Header}
+    }
+
+    if {1} {
+	test simple-GET-with-timeout2 {test 1 second entity timeout} -setup {
+	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
+		upvar #1 close close
+		set ::rxtimeout $close
+	    }}}} process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    try {
+		set waiter [::socket localhost $::port]	;# now do nothing
+		chan configure $waiter -translation crlf
+		puts $waiter "GET / HTTP/1.1"
+		puts $waiter "content-length: 100"
+		puts $waiter ""
+
+		# now do nothing
+		vwait ::rxtimeout
+		close $waiter
+		set ::rxtimeout
+	    } on error {e eo} {
+		puts stderr "ERR: $e ($eo)"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	} -result {TIMEOUT Header}
+    }
+
     test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
 	set ::listener [H listen process [list ::apply {{r} {
 	    set entity [dict get $r -entity]; dict unset r -entity
@@ -114,15 +168,17 @@ after 0 {::apply {{} {
 	for {set i 0} {$i < 1024} {incr i} {
 	    append ::body [binary format c [expr {int(rand() * 256)}]]
 	}
-	#puts RQ:[binary encode hex $::body]
+	#puts stderr RQ:[binary encode hex $::body]
 	set token [::http::geturl http://localhost:$::port/ -type application/octet-stream -timeout 100 -query $::body]
 	::http::wait $token
 	#puts stderr "META:[::http::meta $token]"
 	if {[::http::data $token] eq $::body} {
-	    return ""
+	    set result ""
 	} else {
-	    return "'[binary encode hex $::body]' != '[binary encode hex [::http::data $token]]'"
+	    set result "'[binary encode hex $::body]' != '[binary encode hex [::http::data $token]]'"
 	}
+	::http::cleanup $token
+	return $result
     } -cleanup {
 	chan close $::listener
     }
@@ -144,7 +200,7 @@ after 0 {::apply {{} {
 	chan close $::listener
     }
 
-    test simple-ABORT {generate a protocol-level, make sure it's received} -setup {
+    test simple-ABORT {generate a protocol-level abort, make sure it's received} -setup {
 	set ::om $H::methods
 	set H::methods {}	;# no matter what we send it will abort
 	set ::listener [H listen process [list ::apply {{r} {}}] $::port]
@@ -164,24 +220,24 @@ after 0 {::apply {{} {
 }}}
 
 vwait phase	;# wait for this testing phase to finish
+puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
 
 # the tests need to be in event space
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Multiple Asynch Request"
 
     set ::listener [H listen process [list ::apply {{r} {
-	#set delay [expr {int(10000 * rand())}]
-	#after $delay
+	# this server snippet returns the trailing uri element as a text/html val
 	set val [string trim [dict get $r -Header uri] /]
 	#puts stderr "DO: $val"
-	H Ok $r content-type text/html $val
+	H Ok $r content-type text/plain $val
     }}] {*}$::defaults $::port]
 
     set cmd [list ::apply {{count token} {
 	if {[catch {
 	    upvar #0 $token r
 	    if {$r(status) ne "ok"} {
-		puts stderr "FAIL-$r(status) $count/[llength [chan names]]"
+		puts stderr "FAIL-$r(status)/[::http::error $token] $count [llength [chan names]]"
 	    } else {
 		#puts stderr "GOT:$r(body)-[array size ::result]-[llength [chan names]]"
 		if {$r(body) != $count} {
@@ -195,30 +251,35 @@ after 0 {::apply {{} {
 		    }
 		}
 	    }
+	    ::http::cleanup $token
 	} e eo]} {
 	    puts stderr "ERR:'$e'($eo)/([array get r])"
 	}
     }}]
     
+    set ::start_time [clock microseconds]
     for {set i 0} {$i < $::maxports} {incr i} {
 	set ::result($i) [::http::geturl http://localhost:$::port/$i -timeout 0 -command [list {*}$cmd $i]]
     }
 }}}
 
 vwait phase	;# wait for this testing phase to finish
+puts stderr "Elapsed time in [expr {$phase - 1}]: [expr {[clock microseconds] - $::start_time}]uS"
+puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
 
 # the tests need to be in event space
 after 0 {::apply {{} {
     puts stderr Phase:$::phase
-    
-    set ::listener [H listen timeout 0 process [list ::apply {{r} {
+
+    set ::listener [H listen timeout {} process [list ::apply {{r} {
+	# this server snippet pauses randomly, then returns the uri trailing element as an entity
 	#puts stderr "SETTING[info coroutine]/[llength [chan names]] ($r)"
 	after [expr {int(10000 * rand())}] [info coroutine]
-	::yieldto return -code break	;# this bit of magic causes H to leave this processing coro alone
+	::yieldto return -code break	;# this bit of magic causes Hproc to leave this processing coro alone
 	
 	set socket [dict get $r -socket]
 	set val [string trim [dict get $r -Header uri] /]
-	set result [H Ok $r content-type text/html $val]
+	set result [H Ok $r content-type text/plain $val]
 	#puts stderr "TRIGGER[info coroutine]: $val - $socket -> $result"
 	return $result
     }}] $::port]
@@ -229,23 +290,24 @@ after 0 {::apply {{} {
 	    if {[catch {
 		upvar #0 $token r
 		if {$r(status) ne "ok"} {
-		    puts stderr "FAIL-$r(status) $count/[llength [chan names]]"
+		    puts stderr "FAIL-$r(status)/[::http::ncode $token]/[::http::error $token]: $count [llength [chan names]]"
 		} else {
-		    #puts stderr "GOT:$r(body)/[array size ::result]/[llength [chan names]]"
+		    #puts stderr "GOT-$r(status)/[::http::ncode $token]:'$r(body)'-$count [array size ::result]/[llength [chan names]]"
 		    if {$r(body) != $count} {
-			puts stderr "Body '$r(body)' and Count '$count' out of sync"
-		    } else {
-			unset ::result($r(body))
-			if {[array size ::result] == 0} {
-			    incr ::phase
-			    chan close $::listener
-			    puts stderr "Vari-GET complete"
-			}
+			puts stderr "Body '$r(body)' and Count '$count' out of sync ([::http::meta $token])"
+		    }
+
+		    unset ::result($count)
+		    if {[array size ::result] == 0} {
+			incr ::phase
+			chan close $::listener
+			puts stderr "Vari-GET complete"
 		    }
 		}
 	    } e eo]} {
 		puts stderr ERR:'$e'($eo)/([array get r])
 	    }
+	    ::http::cleanup $token
 	}} $i]
 	set ::result($i) [::http::geturl http://localhost:$::port/$i -timeout 0 -command $cmd]
     }
@@ -254,4 +316,4 @@ after 0 {::apply {{} {
 vwait phase
 
 puts stderr Phase:$::phase
-puts "Open Chans: [chan names]"
+puts "Open Chans [llength [chan names]]: [chan names]"

@@ -1,4 +1,7 @@
 # H.tcl - light Httpd 1.1
+
+# H is designed as a collection of modules which can be assembled to form any webserver you like.
+
 if {[info exists argv0] && ($argv0 eq [info script])} {
     # try to load the rest of Wub, if this is running as part of the ensemble of modules
     ::apply {{} {
@@ -99,7 +102,7 @@ namespace eval H {
 package provide H 7.0
 
 # load minimal H components
-H::load Hrx.tcl Htx.tcl #H::load Hproc.tcl
+H::load Hrx.tcl Htx.tcl Hproc.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {
@@ -235,64 +238,69 @@ namespace eval H {
     # Pipeline - listener passes control here, with a new socket
     # this is where the action happens
     proc Pipeline {opts socket ipaddr rport} {
-	Debug.listener {Pipeline $opts $socket $ipaddr $rport}
-	state_log {"" pipeline connect $socket $ipaddr $rport}
+	try {
+	    Debug.listener {Pipeline $opts $socket $ipaddr $rport}
+	    state_log {"" pipeline connect $socket $ipaddr $rport}
 
-	# construct Rx args from defaults
-	set rx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
-	if {[dict exists $opts rx]} {
-	    set rxx [dict get $opts rx]
-	    dict unset opts rx
-	    set rx [dict merge $rxx $rx]	;# listener can pass in defaults
+	    # look for tls opts
+	    if {[dict exists $opts tls] && [dict size [dict get $opts tls]]} {
+		# do something with TLS
+		package require tls
+		set tls [dict merge {
+		    -certfile server-public.pem
+		    -keyfile server-private.pem
+		    -cadir .
+		    -cafile ca.pem
+		    -ssl2 0
+		    -ssl3 1
+		    -tls1 1
+		    -require 0
+		    -request 1} [dict get $opts tls]]
+		tls::import $socket {*}$tls		;# graft the TLS connection on socket
+		tls::handshake $socket		;# start the TLS handshake
+	    }
+
+	    # set up socket encoding and translation - it should never change
+	    chan configure $socket -encoding binary -translation {binary binary} ;#-blocking 0
+
+	    # construct Rx args from defaults
+	    set rx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
+	    if {[dict exists $opts rx]} {
+		set rxx [dict get $opts rx]
+		dict unset opts rx
+		set rx [dict merge $rxx $rx]	;# listener can pass in defaults
+	    }
+
+	    # construct Tx args from defaults
+	    set tx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
+	    if {[dict exists $opts tx]} {
+		set txx [dict get $opts tx]
+		dict unset opts tx
+		set tx [dict merge $tx $txx]	;# listener can pass in defaults
+	    }
+
+	    # allow listener to specify coro namespace
+	    # - it will have to have T and R sub-namespaces
+	    if {[dict exists $opts namespace]} {
+		set namespace [dict get $opts namespace]
+		dict unset opts namespace
+	    } else {
+		set namespace [namespace current]	;# default namespace is H
+	    }
+
+	    # coroutine names (allow listener to override the namespace)
+	    set Tx ${namespace}::T::$socket
+	    set Rx ${namespace}::R::$socket
+
+	    # create a coro for rx one for tx, arrange for the socket to close respective half on termination
+	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
+	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	;# create Tx coro around H::Tx command
+
+	    # from this point on, the coroutines have control of the socket
+	} on error {e eo} {
+	    Debug.error {Pipeline Failure: $e ($eo) opts:$opts socket:$socket ipaddr:$ipaddr rport:$rport}
+	} finally {
 	}
-
-	# construct Tx args from defaults
-	set tx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
-	if {[dict exists $opts tx]} {
-	    set txx [dict get $opts tx]
-	    dict unset opts tx
-	    set tx [dict merge $tx $txx]	;# listener can pass in defaults
-	}
-
-	# allow listener to specify coro namespace
-	# - it will have to have T and R sub-namespaces
-	if {[dict exists $opts namespace]} {
-	    set namespace [dict get $opts namespace]
-	    dict unset opts namespace
-	} else {
-	    set namespace [namespace current]	;# default namespace is H
-	}
-
-	# look for tls opts
-	if {[dict exists $opts tls] && [dict size [dict get $opts tls]]} {
-	    # do something with TLS
-	    package require tls
-	    set tls [dict merge {
-		-certfile server-public.pem
-		-keyfile server-private.pem
-		-cadir .
-		-cafile ca.pem
-		-ssl2 0
-		-ssl3 1
-		-tls1 1
-		-require 0
-		-request 1} [dict get $opts tls]]
-	    tls::import $socket {*}$tls		;# graft the TLS connection on socket
-	    tls::handshake $socket		;# start the TLS handshake
-	}
-
-	# set up socket encoding and translation - it should never change
-	chan configure $socket -encoding binary -translation {binary binary}
-
-	# coroutine names (allow listener to override the namespace)
-	set Tx ${namespace}::T::$socket
-	set Rx ${namespace}::R::$socket
-
-	# create a coro for rx one for tx, arrange for the socket to close respective half on termination
-	::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
-	::coroutine $Tx $namespace Tx {*}$tx rx $Rx	;# create Tx coro around H::Tx command
-
-	# from this point on, the coroutines have control of the socket
     }
 
     # listen - on nominated port
@@ -309,8 +317,9 @@ namespace eval H {
 	dict set args listening $port	;# remember which port we're listening on
 
 	# start the listener
-	Debug.listener {server listening (Pipeline $args) [dict filter $args key -*] $port}
-	return [::socket -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
+	Debug.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}
+	return [::socket -server [list ::H::Pipeline $args] {*}[dict filter $args key -*] {*}$port]
+	#return [::socket -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
     }
 
     namespace export -clear *
