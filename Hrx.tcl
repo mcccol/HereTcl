@@ -223,12 +223,12 @@ proc RxWait {where} {
 }
 
 # Header - read header of request
-proc Header {socket r} {
+proc Header {socket r {one 0}} {
     corovar maxheaders	;# maximum number of headers
+    corovar maxline	;# maximum header line length
 
     chan configure $socket -blocking 0
 
-    corovar maxline	;# maximum header line length
     set lines ""
     while {![chan eof $socket]} {
 	if {[RxWait Header]} {
@@ -254,6 +254,9 @@ proc Header {socket r} {
 	} else {
 	    Debug.httpdlow {[info coroutine] read $status bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
 	    append lines [string range $line 0 end-1] \n	;# append all lines in header
+	    if {$one} {
+		return $lines
+	    }
 	}
     }
     Debug.httpd {[info coroutine] got EOF after headers:'$lines' [chan eof $socket]}
@@ -352,8 +355,8 @@ proc RxChunked {r} {
     tailcall dict merge $r [HeaderCheck [Parse $r [Header $socket $r]]]
 }
 
-# RxEntity - given an entity size, read it in.
-proc RxEntity {r} {
+# RxSizedEntity - given an entity size, read it in.
+proc RxSizedEntity {r} {
     corovar socket	;# socket for pipeline
     corovar todisk	;# size at which we leave entities on disk
     corovar maxentity	;# maximum sized entity we will accept
@@ -362,7 +365,7 @@ proc RxEntity {r} {
     # simple 'entity follows header' with explicit length
     set left [dict get $r content-length]
 
-    Debug.entity {RxEntity of length $left}
+    Debug.entity {RxSizedEntity of length $left}
 
     # enforce server limits on Entity length
     if {$maxentity > 0 && $left > $maxentity} {
@@ -379,7 +382,7 @@ proc RxEntity {r} {
 	# create a temp file to contain entity
 	set entity [Tmpfile $r]
 	chan configure $entity -encoding binary
-	Debug.entity {RxEntity of length $left > $todisk ==> write to $entity}
+	Debug.entity {RxSizedEntity of length $left > $todisk ==> write to $entity}
 
 	Readable $socket [info coroutine]
 
@@ -405,15 +408,15 @@ proc RxEntity {r} {
     } elseif {$left > 0} {
 	# read entity into memory
 	Readable $socket [info coroutine]
-	Debug.entity {RxEntity of length $left < $todisk ==> write to memory}
+	Debug.entity {RxSizedEntity of length $left < $todisk ==> write to memory}
 
 	set entity ""
 	while {[string length $entity] < $left && ![chan eof $socket]} {
-	    if {[RxWait RxEntity]} {return $r}
+	    if {[RxWait RxSizedEntity]} {return $r}
 	    append entity [chan read $socket [expr {$left - [string length $entity]}]]	;# read in as much as is available
 	}
 
-	Debug.entity {RxEntity finished reading [string length $entity] [chan eof $socket]}
+	Debug.entity {RxSizedEntity finished reading [string length $entity] [chan eof $socket]}
 
 	if {$encoding ne "binary"} {
 	    dict set r -entity [encoding convertfrom $encoding $entity]
@@ -442,6 +445,51 @@ proc RxEntity {r} {
     return $r
 }
 
+# RxEntity - return a request dict containing any Entity
+proc RxEntity {R} {
+    # Read Entity (if any)
+    # TODO: 4.4.2 If a message is received with both
+    # a Transfer-Encoding header field
+    # and a Content-Length header field,
+    # the latter MUST be ignored.
+    if {[dict exists $R transfer-encoding]} {
+	# chunked 3.6.1, identity 3.6.2, gzip 3.5,
+	# compress 3.5, deflate 3.5
+	set tels {}; set te_params {}
+
+	variable te_encodings	;# te_encodings we support
+	foreach tel [split [dict get $R transfer-encoding] ,] {
+	    set param [lassign [split $tel ";"] tel]
+	    set tel [string tolower [string trim $tel]]
+	    if {$tel ni $te_encodings} {
+		# can't handle a transfer encoded entity
+		# queue up error response (no caching)
+		[dict get $R -tx] reply [Bad $R "$tel transfer encoding" 501]
+		return {}
+		# see 3.6 - 14.41 for transfer-encoding
+	    } else {
+		dict set te $tel [split $param ";"]
+	    }
+	}
+
+	if {[dict exists $te chunked]} {
+	    set R [RxChunked $R]
+	} else {
+	    [dict get $R -tx] reply [Bad $R "Length Required" 411]
+	    return {}
+	}
+    } elseif {[dict exists $R content-length]} {
+	set R [RxSizedEntity $R]
+    } elseif {0} {
+	# this is a content-length driven entity transfer 411 Length Required
+	[dict get $R -tx] reply [Bad $R "Length Required" 411]
+	return {}
+    }
+    state_log {R rx entity [dict get $R socket] $transaction}
+
+    return $R
+}
+
 variable rx_defaults [defaults {
     port 80		;# default listening port
     maxline 4096	;# maximum line length we'll accept
@@ -454,13 +502,35 @@ variable rx_defaults [defaults {
     def_charset [encoding system]
     entitypath ""	;# path on which Tmpfile creates entity files
     opts {}
-    timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxEntity 20}
+    timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxSizedEntity 20}
     ctype text/html
 }]
 
 # RxDead - called when Rx coroutine disappears
 proc RxDead {coro s tx args} {
     #puts stderr "RxDEAD $coro '$s' [catch {set r [chan pending input $s]}]/$r [catch {set t [chan pending output $s]}]/$t [llength [chan names]]"
+}
+
+
+proc RxHeaders {R headers} {
+    set socket [dict get $R -socket]
+    set all [Header $socket $R]	;# collect all remaining headers
+    if {$all eq ""} {
+	# TODO - distinguish singleton from timeout
+	return ""	;# must have timed out - shut up shop
+    }
+
+    append headers $all
+
+    # indicate to tx that a request with this transaction id
+    # has been received and is (as yet) unsatisfied
+    set transaction [dict get $R -transaction]
+    [dict get $R -tx] pending $transaction
+
+    set R [HeaderCheck [Parse $R $headers]]	;# parse $headers as a complete request header
+
+    state_log {R rx headers $socket $transaction}
+    return $R
 }
 
 # Rx - coroutine to process pipeline reception
@@ -503,54 +573,16 @@ proc Rx {args} {
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
 	    state_log {R rx request $socket $transaction}
 
-	    set headers [Header $socket $R]	;# collect the header
-	    if {![llength $headers]} {
+	    set headers [Header $socket $R 1]	;# collect the first line
+	    if {$headers eq ""} {
 		break	;# must have timed out - shut up shop
 	    }
 
-	    # indicate to tx that a request with this transaction id
-	    # has been received and is (as yet) unsatisfied
-	    $tx pending $transaction
-
-	    set R [HeaderCheck [Parse $R $headers]]	;# parse $headers as a complete request header
-	    state_log {R rx headers $socket $transaction}
-
-	    # Read Entity (if any)
-	    # TODO: 4.4.2 If a message is received with both
-	    # a Transfer-Encoding header field
-	    # and a Content-Length header field,
-	    # the latter MUST be ignored.
-	    if {[dict exists $R transfer-encoding]} {
-		# chunked 3.6.1, identity 3.6.2, gzip 3.5,
-		# compress 3.5, deflate 3.5
-		set tels {}; set te_params {}
-
-		variable te_encodings	;# te_encodings we support
-		foreach tel [split [dict get $R transfer-encoding] ,] {
-		    set param [lassign [split $tel ";"] tel]
-		    set tel [string tolower [string trim $tel]]
-		    if {$tel ni $te_encodings} {
-			# can't handle a transfer encoded entity
-			# queue up error response (no caching)
-			tailcall $tx reply [Bad $R "$tel transfer encoding" 501]
-			# see 3.6 - 14.41 for transfer-encoding
-		    } else {
-			dict set te $tel [split $param ";"]
-		    }
-		}
-
-		if {[dict exists $te chunked]} {
-		    set R [RxChunked $R]
-		} else {
-		    tailcall $tx reply [Bad $R "Length Required" 411]
-		}
-	    } elseif {[dict exists $R content-length]} {
-		set R [RxEntity $R]
-	    } elseif {0} {
-		# this is a content-length driven entity transfer 411 Length Required
-		tailcall $tx reply [Bad $R "Length Required" 411]
+	    set R [RxHeaders $R $headers]	;# fetch all remaining headers
+	    set R [RxEntity $R]			;# fetch any entity
+	    if {![dict size $R} {
+		break	;# must have timed out - shut up shop
 	    }
-	    state_log {R rx entity $socket $transaction}
 
 	    process $R	;# Process the request+entity in a bespoke command
 	    state_log {R rx processed $socket $transaction}
