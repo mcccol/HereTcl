@@ -264,7 +264,7 @@ namespace eval H {
 	}
 
 	# look for tls opts
-	if {[dict exists $opts tls]} {
+	if {[dict exists $opts tls] && [dict size [dict get $opts tls]]} {
 	    # do something with TLS
 	    package require tls
 	    set tls [dict merge {
