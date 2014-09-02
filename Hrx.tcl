@@ -552,8 +552,7 @@ proc Rx {args} {
 
 	while {![catch {chan eof $socket} eof]
 	       && !$eof
-	       && [chan pending input $socket] != -1
-	       && [chan pending output $socket] != -1
+	       && [chan pending input $socket] != -1 && [chan pending output $socket] != -1
 	       && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
 	   } {
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
@@ -593,8 +592,19 @@ proc Rx {args} {
 	Debug.error {Rx $socket BREAK '$e' ($eo)}
     } on ok {e eo} {
 	# this happens on normal return
-	state_log {R rx closed $socket $transaction}
-	Debug.httpd {Normal Termination}
+
+	if {[catch {chan eof $socket} eof] || $eof} {
+	    set reason "EOF on socket"
+	} elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {
+	    set reason "No Pending i/o [chan pending input $socket] == -1 || [chan pending output $socket] == -1"
+	} elseif {[dict exists $R connection] && [string tolower [dict get $R connection]] eq "close"} {
+	    set reason "Client requested close"
+	} {
+	    set reason unknown
+	}
+
+	state_log {R rx closed $socket $transaction $reason}
+	Debug.httpd {Normal termination: $reason}
     } finally {
 	if {[info exists timer]} {
 	    catch {::after cancel $timer}; unset timer
