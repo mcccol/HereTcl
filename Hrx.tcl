@@ -228,7 +228,7 @@ proc Header {socket r {one 0}} {
 
     set lines ""
     while {![chan eof $socket]} {
-	RxWait Header
+	RxWait StartHeader
 	set status [gets $socket line]
 	if {$status == -1} {
 	    # we have no line - can we even get a line?
@@ -532,7 +532,8 @@ proc Rx {args} {
 
     Debug.listener {start Rx [info coroutine] $args}
 
-    trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
+    # This can be used as a debugging aid to track coro state
+    #trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
 
     set headers {}
     set transaction 0	;# unique count of packets received by this receiver
@@ -561,11 +562,14 @@ proc Rx {args} {
     } trap HTTP {e eo} {
 	state_log {R rx http $socket $transaction}
 	Debug.httpd {Httpd $e}
-	set close [dict get $eo -errorcode]
     } trap TIMEOUT {e eo} {
-	state_log {R rx timeout $socket $transaction}
-	Debug.httpd {Httpd $e}
-	set close [dict get $eo -errorcode]
+	if {[dict get $eo -errorcode] eq ""} {
+	    state_log {R rx inactive $socket $transaction}
+	    Debug.httpd {Inactive $e}
+	} else {
+	    state_log {R rx timeout $socket $transaction}
+	    Debug.httpd {Httpd $e}
+	}
     } on error {e eo} {
 	state_log {R rx error $socket $transaction}
 	Debug.error {Rx $socket ERROR '$e' ($eo)}
@@ -578,6 +582,7 @@ proc Rx {args} {
 	Debug.error {Rx $socket BREAK '$e' ($eo)}
     } on ok {e eo} {
 	# this happens on normal return
+	state_log {R rx closed $socket $transaction}
 	Debug.httpd {Normal Termination}
     } finally {
 	if {[info exists timer]} {
