@@ -506,7 +506,7 @@ proc TxSend {} {
     corovar server_id
     set rline [list "HTTP/1.1 $code $errmsg" "Date: [Now]" "Server: $server_id"]
 
-    Debug.httpd {'[lindex $rline 0]' response to '[dict get $reply -Header full]'}
+    Debug.httpd {'[lindex $rline 0]' response to '[dict get? $reply -Header full]'}
     TxLine $socket {*}$rline
 
     if {$code == 204} {

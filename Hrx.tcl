@@ -250,7 +250,7 @@ proc Header {socket r {one 0}} {
 		return $lines
 	    } else {
 		# skip multiple redundant empty lines
-		if {[incr count] > 20} {
+		if {[incr count] > 4} {
 		    Bad $r "Too Much Blank"
 		}
 	    }
@@ -484,7 +484,7 @@ proc RxEntity {R} {
 	# this is a content-length driven entity transfer 411 Length Required
 	Bad $R "Length Required" 411
     }
-    state_log {R rx entity [dict get $R socket] $transaction}
+    state_log {R rx entity [dict get $R -socket] [dict get $R -transaction]}
 
     return $R
 }

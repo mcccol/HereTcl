@@ -134,11 +134,14 @@ namespace eval H {
 
     # construct an HTTP Bad response
     proc Bad {rsp message {code 400}} {
-	corovar close; set close $message	;# this will cause the reader to close
-	dict set rsp -content <p>[H armour $message]</p>
-	dict set rsp -code $code
-	set rsp [NoCache $rsp]
-	[dict get $rsp -tx] reply $rsp
+	if {[dict exists $rsp -Header full]} {
+	    dict set rsp -content <p>[H armour $message]</p>
+	    dict set rsp -code $code
+	    set rsp [NoCache $rsp]
+	    [dict get $rsp -tx] reply $rsp
+	} else {
+	    # this isn't even HTTP - don't bother with the Tx
+	}
 	return -code error -errorcode [list HTTP $code] $message
     }
 
