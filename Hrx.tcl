@@ -534,13 +534,6 @@ proc Rx {args} {
 
     trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
 
-    # ensure there's a viable entity path
-    if {[info exists entitypath] && $entitypath ne ""} {
-	set entitypath [file normalize $entitypath]
-	dict set args entitypath $entitypath
-	file mkdir [file dirname $entitypath]
-    }
-
     set headers {}
     set transaction 0	;# unique count of packets received by this receiver
     set R {}

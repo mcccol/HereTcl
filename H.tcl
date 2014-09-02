@@ -272,6 +272,12 @@ namespace eval H {
 		dict unset opts rx
 		set rx [dict merge $rxx $rx]	;# listener can pass in defaults
 	    }
+	    # ensure there's a viable entity path
+	    if {[dict exists $rx entitypath] && [dict get $rx entitypath ne ""]} {
+		set entitypath [file normalize [dict get $rx entitypath]]
+		file mkdir [file dirname $entitypath]
+		dict set rx entitypath $entitypath
+	    }
 
 	    # construct Tx args from defaults
 	    set tx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
