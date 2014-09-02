@@ -123,7 +123,7 @@ after 0 {::apply {{} {
 	    }
 	} -cleanup {
 	    chan close $::listener
-	} -result {TIMEOUT Header}
+	} -result {TIMEOUT StartHeader}
     }
 
     if {1} {
@@ -140,7 +140,7 @@ after 0 {::apply {{} {
 		chan configure $waiter -translation crlf
 		puts $waiter "GET / HTTP/1.1"
 		puts $waiter "content-length: 100"
-		puts $waiter ""
+		flush $waiter
 
 		# now do nothing
 		vwait ::rxtimeout
@@ -152,6 +152,61 @@ after 0 {::apply {{} {
 	} -cleanup {
 	    chan close $::listener
 	} -result {TIMEOUT Header}
+    }
+
+    if {1} {
+	test simple-No-Host {test no-host 400 response} -setup {
+	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
+		upvar #1 eo eo
+		set ::rxtimeout [dict get $eo -errorcode]
+	    }}}} process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    try {
+		set waiter [::socket localhost $::port]	;# now do nothing
+		chan configure $waiter -translation crlf
+		puts $waiter "GET / HTTP/1.1"
+		puts $waiter "content-length: 100"
+		puts $waiter ""
+		flush $waiter
+
+		# now do nothing
+		vwait ::rxtimeout
+		close $waiter
+		set ::rxtimeout
+	    } on error {e eo} {
+		puts stderr "ERR: $e ($eo)"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	} -result {HTTP 400}
+    }
+
+    if {1} {
+	test simple-phoney-HTTP {test garbage connection} -setup {
+	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
+		upvar #1 eo eo
+		set ::rxtimeout [dict get $eo -errorcode]
+	    }}}} process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    try {
+		set waiter [::socket localhost $::port]	;# now do nothing
+		chan configure $waiter -translation crlf
+		puts $waiter "WE now send some crap which has nothing to do with HTTP"
+		flush $waiter
+
+		vwait ::rxtimeout
+		close $waiter
+		set ::rxtimeout
+	    } on error {e eo} {
+		puts stderr "ERR: $e ($eo)"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	} -result {HTTP 400}
     }
 
     test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
@@ -185,7 +240,9 @@ after 0 {::apply {{} {
 
     test simple-ERROR {generate an error, make sure it's received} -setup {
 	set ::listener [H listen error {::apply {{r args} {dict set r -code 1; return $r}}} process [list ::apply {{r} {
+	    Debug off error
 	    expr 1/0	;# provoke an error
+	    Debug on error
 	}}] {*}$::defaults $::port]
     } -body {
 	set token [::http::geturl http://localhost:$::port/ -timeout 100]

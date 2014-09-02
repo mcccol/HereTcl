@@ -226,9 +226,15 @@ proc Header {socket r {one 0}} {
 
     chan configure $socket -blocking 0
 
+    if {$one} {
+	set errmsg StartHeader
+    } else {
+	set errmsg Header
+    }
+
     set lines ""
     while {![chan eof $socket]} {
-	RxWait StartHeader
+	RxWait $errmsg
 	set status [gets $socket line]
 	if {$status == -1} {
 	    # we have no line - can we even get a line?
@@ -244,6 +250,9 @@ proc Header {socket r {one 0}} {
 		return $lines
 	    } else {
 		# skip multiple redundant empty lines
+		if {[incr count] > 20} {
+		    Bad $r "Too Much Blank"
+		}
 	    }
 	} else {
 	    Debug.httpdlow {[info coroutine] read $status bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
@@ -504,9 +513,7 @@ proc RxDead {coro s tx args} {
 
 proc RxHeaders {R headers} {
     set socket [dict get $R -socket]
-    set all [Header $socket $R]	;# collect all remaining headers
-
-    append headers $all
+    append headers [Header $socket $R]	;# collect all remaining headers
 
     # indicate to tx that a request with this transaction id
     # has been received and is (as yet) unsatisfied
@@ -553,6 +560,10 @@ proc Rx {args} {
 	    state_log {R rx request $socket $transaction}
 
 	    set headers [Header $socket $R 1]	;# collect the first line
+	    if {![string match HTTP/* [lindex [split $headers " "] end]]} {
+		Bad $R "This isn't HTTP"
+	    }
+
 	    set R [RxHeaders $R $headers]	;# fetch all remaining headers
 	    set R [RxEntity $R]			;# fetch any entity
 
