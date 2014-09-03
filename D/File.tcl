@@ -40,15 +40,14 @@ oo::class create File {
     }
 
     method Directory {r path} {
-	puts stderr "Directory '$path' ($r)"
+	#puts stderr "Directory '$path' ($r)"
 	set result {}
 	lappend result "<li><a href='..'>..</a></li>"
-	foreach file [lsort [glob [file join $path *]]] {
-	    set name [file tail $file]
-	    if {[file type $file] eq "directory"} {
-		append name /
-	    }
-	    lappend result "<li><a href='[dict get $r -Url path]/$name'>$name</a></li>"
+	set upath [string trimright [dict get $r -Url path] /]
+	foreach file [lsort [glob -directory $path *]] {
+	    #puts stderr "DirEl '$file' - '$upath'"
+	    set name [file tail $file][expr {[file type $file] eq "directory"?"/":""}]
+	    lappend result "<li><a href='$upath/$name'>$name</a></li>"
 	}
 	return [H Ok $r content-type text/html <ul>[join $result \n]</ul>]
     }
@@ -82,7 +81,7 @@ oo::class create File {
 
 	if {![file exists $path]} {
 	    # if the file doesn't exist, say so.
-	    return [H NotFound $r "<p>File '$opath' doesn't exist</p>"]
+	    return [H NotFound $r "<p>File '$opath' doesn't exist.</p>"]
 	}
 
 	# handle conditional request
@@ -115,7 +114,7 @@ oo::class create File {
 	    dict set r last-modified [H Date $mtime]
 	} on error {e eo} {
 	    Debug.file {Error $e ($eo)}
-	    set r [H NotFound $r "<p>File '$opath' doesn't exist.</p>"]
+	    set r [H NotFound $r "<p>File '$opath' doesn't exist. '$path' '$e' ($eo)</p>"]
 	}
 	return $r
     }

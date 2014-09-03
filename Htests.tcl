@@ -103,57 +103,6 @@ after 0 {::apply {{} {
 	}
     }
 
-
-    if {1} {
-	test simple-GET-with-timeout {test 1 second timeout} -setup {
-	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
-		upvar #1 eo eo
-		set ::rxtimeout [dict get $eo -errorcode]
-	    }}}} process [list ::apply {{r} {
-		H Ok $r content-type text/html <p>Moop</p>
-	    }}] {*}$::defaults $::port]
-	} -body {
-	    try {
-		set waiter [::socket localhost $::port]	;# now do nothing
-		vwait ::rxtimeout
-		close $waiter
-		set ::rxtimeout
-	    } on error {e eo} {
-		puts stderr "ERR: $e ($eo)"
-	    }
-	} -cleanup {
-	    chan close $::listener
-	} -result {TIMEOUT StartHeader}
-    }
-
-    if {1} {
-	test simple-GET-with-timeout2 {test 1 second entity timeout} -setup {
-	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
-		upvar #1 eo eo
-		set ::rxtimeout [dict get $eo -errorcode]
-	    }}}} process [list ::apply {{r} {
-		H Ok $r content-type text/html <p>Moop</p>
-	    }}] {*}$::defaults $::port]
-	} -body {
-	    try {
-		set waiter [::socket localhost $::port]	;# now do nothing
-		chan configure $waiter -translation crlf
-		puts $waiter "GET / HTTP/1.1"
-		puts $waiter "content-length: 100"
-		flush $waiter
-
-		# now do nothing
-		vwait ::rxtimeout
-		close $waiter
-		set ::rxtimeout
-	    } on error {e eo} {
-		puts stderr "ERR: $e ($eo)"
-	    }
-	} -cleanup {
-	    chan close $::listener
-	} -result {TIMEOUT Header}
-    }
-
     if {1} {
 	test simple-No-Host {test no-host 400 response} -setup {
 	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
@@ -207,6 +156,56 @@ after 0 {::apply {{} {
 	} -cleanup {
 	    chan close $::listener
 	} -result {HTTP 400}
+    }
+
+    if {1} {
+	test simple-GET-with-timeout {test 1 second timeout} -setup {
+	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
+		upvar #1 eo eo
+		set ::rxtimeout [dict get $eo -errorcode]
+	    }}}} process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    try {
+		set waiter [::socket localhost $::port]	;# now do nothing
+		vwait ::rxtimeout
+		close $waiter
+		set ::rxtimeout
+	    } on error {e eo} {
+		puts stderr "ERR: $e ($eo)"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	} -result {TIMEOUT StartHeader}
+    }
+
+    if {1} {
+	test simple-GET-with-timeout2 {test 1 second entity timeout} -setup {
+	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
+		upvar #1 eo eo
+		set ::rxtimeout [dict get $eo -errorcode]
+	    }}}} process [list ::apply {{r} {
+		H Ok $r content-type text/html <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    try {
+		set waiter [::socket localhost $::port]	;# now do nothing
+		chan configure $waiter -translation crlf
+		puts $waiter "GET / HTTP/1.1"
+		puts $waiter "content-length: 100"
+		flush $waiter
+
+		# now do nothing
+		vwait ::rxtimeout
+		close $waiter
+		set ::rxtimeout
+	    } on error {e eo} {
+		puts stderr "ERR: $e ($eo)"
+	    }
+	} -cleanup {
+	    chan close $::listener
+	} -result {TIMEOUT Header}
     }
 
     test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {

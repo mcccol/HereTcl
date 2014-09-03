@@ -328,7 +328,6 @@ proc TxFile {fd args} {
     set reply [dict merge $reply $args]
 
     set tx [dict get $reply -tx]
-    set ns [dict get $reply -ns]
     set socket [dict get $reply -socket]
 
     # the app has returned an open file instead of literal content
@@ -355,11 +354,11 @@ proc TxFile {fd args} {
 	Debug.httpdtx {Content is a seekable file, do not want GZIP - known content-length}
     }
 
-    ${ns}::TxHeaders $socket $reply	;# emit $reply's headers
+    TxHeaders $socket $reply	;# emit $reply's headers
 
     # set up a readable event stream over $fd
     chan configure $fd -blocking 0
-    chan event $fd readable [list ${ns}::TxReadFile $fd $tx [expr {[dict exists $reply -file_keep]?[dict get $reply -file_keep]:0}]]
+    chan event $fd readable [list [namespace current]::TxReadFile $fd $tx [expr {[dict exists $reply -file_keep]?[dict get $reply -file_keep]:0}]]
 
     return $reply
 }
@@ -475,13 +474,18 @@ proc TxSend {} {
 		# don't send gzipped if it is larger than original
 		dict set reply -content $gzip	;# content becomes gzipped content
 		dict set reply content-encoding gzip
+		Debug.httpdtx {Format: zipping ($reply) - [string length [dict get $reply -content]] bytes}
 	    } else {
 		dict unset reply content-encoding
+		Debug.httpdtx {Format: Not zipping - pointless ($reply)}
 	    }
+	} else {
+	    Debug.httpdtx {Format: Not zipping - not permitted ($reply)}
 	}
 
 	dict set reply content-length [string length [dict get $reply -content]] ;# set correct content-length
     } elseif {[dict exists $reply -process]} {
+	Debug.httpdtx {Format: Reply must be chunked ($reply)}
 	dict set reply transfer-encoding chunked	;# it has to be sent chunked
     } elseif {$code in {200 201 202 203 204 205 206}} {
 	# no -content, no -process ... reply is contentless
@@ -510,7 +514,7 @@ proc TxSend {} {
     TxLine $socket {*}$rline
 
     if {$code == 204} {
-	${ns}::TxHeaders $socket $reply	;# emit $reply's headers
+	TxHeaders $socket $reply	;# emit $reply's headers
 	return
     }
 
@@ -541,12 +545,11 @@ proc TxSend {} {
 	}
 
 	dict set reply -tx [info coroutine]
-	dict set reply -ns $ns
 	set reply [{*}[dict get $reply -process] $reply]
 	return
     }
 
-    ${ns}::TxHeaders $socket $reply	;# emit $reply's headers
+    TxHeaders $socket $reply	;# emit $reply's headers
     
     if {[dict exists $reply -content]} {
 	# -content exists - we have the full content ready to go - just send it
@@ -558,10 +561,10 @@ proc TxSend {} {
 	#chan puts -nonewline $ll [dict get $reply -content]	;# send the content in its entirety
 	#close $ll
 
-	Debug.httpd {[info coroutine] Tx sent entity: [dict get $reply content-length] bytes}
+	Debug.httpdtx {[info coroutine] Tx sent entity: [dict get $reply content-length] bytes}
 
 	# generate a log line
-	corovar ns; catch {${ns}::log $reply}
+	corovar ns; catch {log $reply}
 
 	# this request is no longer pending
 	corovar sent
@@ -584,8 +587,6 @@ proc Tx {args} {
     variable tx_defaults
     set args [dict merge $tx_defaults $args]
     dict with args {}
-
-    set ns [namespace qualifiers [info coroutine]]
 
     trace add command [info coroutine] delete [namespace code [list TxDead [info coroutine] $socket]]
 
@@ -669,7 +670,7 @@ proc Tx {args} {
 		    }
 		    
 		    # generate a log line
-		    catch {${ns}::log $reply}
+		    catch {log $reply}
 
 		    if {[info exists gzipper]} {
 			$gzipper close	;# done with the stream
@@ -754,7 +755,7 @@ proc Tx {args} {
 		dict unset pending $next		;# consume pending response
 		Debug.httpdtx {[info coroutine] Tx sending ($reply)}
 		
-		${ns}::TxSend
+		TxSend
 	    }
 
 	    if {$close ne ""

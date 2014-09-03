@@ -12,7 +12,7 @@ proc Tmpfile {R} {
     corovar te
     if {[info exists te] && "gzip" in [dict keys $te]} {
 	::zlib push inflate $entity	;# inflate it on the fly
-	chan configure $entity -translation binary
+	chan configure $entity -translation binary -encoding binary
     }
 
     return $entity
@@ -138,48 +138,48 @@ proc HeaderCheck {r} {
 # Parse - split request/response line into header -Header fields
 # turn rest of header into dict
 # Parse - given a set of header lines, parse them and populate the request dict
-proc Parse {R lines} {
+proc Parse {R} {
+    set lines [regsub -all {\n[\t ]+} [dict get $R -Full] " "]	;# merge continuation lines
+    dict unset R -Full
     Debug.httpdlow {Parse: $lines}
-    set lines [regsub -all "\n\[\t \]+" $lines " "]	;# strip continuation lines
-    set lines [split $lines \n]	;# break up into a list of lines
-    
-    # assemble headers into a dict
-    set headers {}
+
     set clientheaders {}
 
-    foreach element [lassign $lines firstline] {
+    # assemble headers into the R
+    foreach element [lassign [split $lines \n] firstline] {
 	set value [string trim [join [lassign [split $element :] key] :]]
 	set key [string tolower [string trim $key]]
-	if {[dict exists $headers $key]} {
+	if {[dict exists $R $key]} {
 	    # turn multiply occurring keys into a list of values
-	    if {![dict exists $headers -Header multiple $key]} {
-		dict set headers $key [list [dict get $headers $key]]	;# first duplicate
+	    if {![dict exists $R -Header multiple $key]} {
+		dict set R $key [list [dict get $R $key]]	;# first duplicate
 	    }
-	    
-	    dict lappend headers $key $value
-	    dict set headers -Header multiple $key [llength [dict get $headers $key]]
+
+	    dict lappend R $key $value
+	    dict set R -Header multiple $key [llength [dict get $R $key]]
 	} else {
-	    dict set headers $key $value
+	    dict set R $key $value
 	    lappend clientheaders $key	 ;# keep list of headers passed in by client
 	}
     }
 
-    dict set headers -Header full $firstline	;# record the first line as request/status line
+    # unpack request/status line into its fields
+    dict set R -Header full $firstline	;# record the first line as request/status line
     if {[string match HTTP/* $firstline]} {
 	# Status-Line = HTTP-Version SP Status-Code SP Reason-Phrase CRLF
-	dict set headers -Header reason [join [lassign [split [dict get $headers -Header full]] version status]]
-	dict set headers -Header status $status
+	dict set R -Header reason [join [lassign [split [dict get $R -Header full]] version status]]
+	dict set R -Header status $status
     } else {
 	# Request-Line = Method SP Request-URI SP HTTP-Version CRLF
 	foreach name {method uri version} value [split $firstline] {
 	    set $name $value
-	    dict set headers -Header $name $value
+	    dict set R -Header $name $value
 	}
     }
 
-    dict set headers -Header version [lindex [split $version /] end]
-    dict set headers -Header clientheaders $clientheaders
-    set R [dict merge $R $headers]
+    dict set R -Header version [lindex [split $version /] end]
+    dict set R -Header clientheaders $clientheaders
+
     return $R
 }
 
@@ -220,10 +220,10 @@ proc RxWait {where} {
 }
 
 # Header - read header of request
-proc Header {socket r {one 0}} {
+proc Header {r {one 0}} {
     corovar maxheaders	;# maximum number of headers
     corovar maxline	;# maximum header line length
-
+    set socket [dict get $r -socket]
     chan configure $socket -blocking 0
 
     if {$one} {
@@ -232,39 +232,43 @@ proc Header {socket r {one 0}} {
 	set errmsg Header
     }
 
-    set lines ""
-    while {![chan eof $socket]} {
+    while {![catch {chan eof $socket} eof] && !$eof} {
 	RxWait $errmsg
-	set status [gets $socket line]
-	if {$status == -1} {
+	set len [gets $socket line]
+	if {$len == -1} {
 	    # we have no line - can we even get a line?
 	    if {$maxline && [chan pending input $socket] > $maxline} {
 		Debug.httpd {[info coroutine] MAXLINE [chan pending input $socket] > $maxline}
 		Bad $r "Line too long (over $maxline)"
+	    } else {
 	    }
 	    continue
-	} elseif {$status == 1} {
-	    # no input left to get
-	    if {$lines ne ""} {
-		Debug.httpdlow {[info coroutine] got [llength $lines] lines of header}
-		return $lines
-	    } else {
-		# skip multiple redundant empty lines
+	} elseif {$len == 1} {
+	    # we just got a \r - empty line
+	    if {$one} {
+		# skip multiple redundant empty lines at start of header
 		if {[incr count] > 4} {
 		    Bad $r "Too Much Blank"
 		}
+	    } else {
+		# this terminates headers
+		Debug.httpdlow {[info coroutine] got [llength [split [dict get $r -Full] \n]] lines of header}
+		return $r
 	    }
 	} else {
-	    Debug.httpdlow {[info coroutine] read $status bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
-	    append lines [string range $line 0 end-1] \n	;# append all lines in header
+	    Debug.httpdlow {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
+	    dict append r -Full [string range $line 0 end-1] \n	;# append all lines in header
 	    if {$one} {
-		return $lines
+		if {![string match HTTP/* [lindex [split [dict get $r -Full] " "] end]]} {
+		    Bad $r "This isn't even HTTP"
+		}
+		return $r	;# we only want the first line
 	    }
 	}
     }
-    Debug.httpd {[info coroutine] got EOF after headers:'$lines' [chan eof $socket]}
-    
-    return $lines	;# we got EOF - maybe we still have lines
+
+    Debug.httpd {[info coroutine] got EOF after headers:'$r' $eof}
+    Bad $r "No end of Headers"
 }
 
 # ChunkSize - return the next chunk size
@@ -354,7 +358,7 @@ proc RxChunked {r} {
     }
 
     # read+parse more header fields - apparently this is possible with Chunked ... who knew?
-    tailcall dict merge $r [HeaderCheck [Parse $r [Header $socket $r]]]
+    tailcall dict merge $r [HeaderCheck [Parse [Header $r]]]
 }
 
 # RxSizedEntity - given an entity size, read it in.
@@ -511,18 +515,18 @@ proc RxDead {coro s tx args} {
 }
 
 
-proc RxHeaders {R headers} {
-    set socket [dict get $R -socket]
-    append headers [Header $socket $R]	;# collect all remaining headers
+# RxHeaders - collec the headers
+proc RxHeaders {R} {
+    set R [Header $R]	;# collect all remaining headers
 
     # indicate to tx that a request with this transaction id
     # has been received and is (as yet) unsatisfied
-    set transaction [dict get $R -transaction]
-    [dict get $R -tx] pending $transaction
+    [dict get $R -tx] pending [dict get $R -transaction]
 
-    set R [HeaderCheck [Parse $R $headers]]	;# parse $headers as a complete request header
+    set R [Parse $R]
+    set R [HeaderCheck $R]	;# parse $headers as a complete request header
 
-    state_log {R rx headers $socket $transaction}
+    state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
     return $R
 }
 
@@ -558,15 +562,12 @@ proc Rx {args} {
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
 	    state_log {R rx request $socket $transaction}
 
-	    set headers [Header $socket $R 1]	;# collect the first line
-	    if {![string match HTTP/* [lindex [split $headers " "] end]]} {
-		Bad $R "This isn't even HTTP"
-	    }
+	    set R [Header $R 1]		;# fetch request/status line
+	    set R [RxHeaders $R]	;# fetch all remaining headers
+	    set R [RxEntity $R]		;# fetch any entity
 
-	    set R [RxHeaders $R $headers]	;# fetch all remaining headers
-	    set R [RxEntity $R]			;# fetch any entity
+	    process $R			;# Process the request+entity in a bespoke command
 
-	    process $R	;# Process the request+entity in a bespoke command
 	    state_log {R rx processed $socket $transaction}
 	}
     } trap HTTP {e eo} {

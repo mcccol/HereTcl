@@ -80,7 +80,7 @@ namespace eval ::Debug {
 		variable baseline
 		set time ""
 		if {$timestamp} {
-		    set time [clock format [clock scan now]]-
+		    set time [clock format [clock scan now] -format {%Y-%m-%d %H:%M:%S}]-
 		}
 		if {0 && $timestamp} {
 		    set now [::tcl::clock::milliseconds]
@@ -188,28 +188,3 @@ namespace eval ::Debug {
 }
 
 Debug on error 100
-Debug off admin
-Debug off cache
-Debug off convert
-Debug off cookies
-Debug off db
-Debug off dblayout
-Debug off dispatch
-Debug off entity
-Debug off file
-Debug off home
-Debug off host
-Debug off http
-Debug off mason
-Debug off mime
-Debug off session
-Debug off smtp
-Debug off socket
-Debug off sql
-Debug off timer
-Debug off url
-Debug off vfs
-Debug off wiki
-Debug off wikiload
-Debug off wikisearch
-Debug off activity
