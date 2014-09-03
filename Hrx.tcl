@@ -225,6 +225,7 @@ proc Header {r {one 0}} {
     corovar maxline	;# maximum header line length
     set socket [dict get $r -socket]
     chan configure $socket -blocking 0
+    dict incr R -state
 
     if {$one} {
 	set errmsg StartHeader
@@ -452,6 +453,8 @@ proc RxSizedEntity {r} {
 
 # RxEntity - return a request dict containing any Entity
 proc RxEntity {R} {
+    dict incr R -state
+
     # Read Entity (if any)
     # TODO: 4.4.2 If a message is received with both
     # a Transfer-Encoding header field
@@ -517,6 +520,7 @@ proc RxDead {coro s tx args} {
 
 # RxHeaders - collec the headers
 proc RxHeaders {R} {
+    dict incr R -state
     set R [Header $R]	;# collect all remaining headers
 
     # indicate to tx that a request with this transaction id
@@ -528,6 +532,14 @@ proc RxHeaders {R} {
 
     state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
     return $R
+}
+
+# RxProcess - default handling of packet reception
+proc RxProcess {R} {
+    set R [Header $R 1]	;# fetch request/status line
+    set R [RxHeaders $R]	;# fetch all remaining headers
+    set R [RxEntity $R]	;# fetch any entity
+    return $R		;# return completed request
 }
 
 # Rx - coroutine to process pipeline reception
@@ -559,14 +571,12 @@ proc Rx {args} {
 	       && [chan pending input $socket] != -1 && [chan pending output $socket] != -1
 	       && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
 	   } {
-	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
 	    state_log {R rx request $socket $transaction}
 
-	    set R [Header $R 1]		;# fetch request/status line
-	    set R [RxHeaders $R]	;# fetch all remaining headers
-	    set R [RxEntity $R]		;# fetch any entity
-
-	    process $R			;# Process the request+entity in a bespoke command
+	    # receive and process packet
+	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
+	    set R [RxProcess $R]		;# receive the request
+	    dict incr R -state; process $R	;# Process the request+entity in a bespoke command
 
 	    state_log {R rx processed $socket $transaction}
 	}

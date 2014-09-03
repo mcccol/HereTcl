@@ -15,9 +15,11 @@ Debug define cache
 Debug define cookies
 Debug define httpdchan
 
-interp bgerror {} BGERROR
-proc BGERROR {args} {
-    puts stderr "*******BGERROR: $args"
+if {0} {
+    interp bgerror {} BGERROR
+    proc BGERROR {args} {
+	puts stderr "*******BGERROR: ($args)"
+    }
 }
 
 #interp bgerror {} [list ::apply {{args} {

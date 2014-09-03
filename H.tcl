@@ -55,6 +55,16 @@ namespace eval H {
     variable default_port 80		;# default listener port
     variable home [file dirname [file normalize [info script]]]
 
+    proc BGERROR {lower e eo} {
+	puts stderr BGERROR:$args
+	set rest [lassign [dict get $eo -errorcode] errcode subcode]
+	switch -- $errcode {
+	    default {
+		puts stderr "BGERROR: '$e' ($eo)"
+	    }
+	}
+    }
+
     # corovar - used extensively to store state in the per-coro scope
     proc corovar {n} {
 	uplevel 1 upvar #1 $n $n
@@ -98,6 +108,9 @@ namespace eval H {
 	}
     }
 }
+
+# install our own default bgerror
+interp bgerror {} [list [namespace code [list H BGERROR]] [interp bgerror {}]]
 
 package provide H 7.0
 
@@ -329,8 +342,16 @@ namespace eval H {
 
 	# start the listener
 	Debug.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}
-	return [::socket -server [list ::H::Pipeline $args] {*}[dict filter $args key -*] {*}$port]
-	#return [::socket -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
+	try {
+	    set socket [::socket -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
+	} trap {POSIX EADDRINUSE} {e eo} {
+	    puts stderr "LISTENER ERROR: [dict filter $args key -*] port $port is already in use"
+	    exit
+	} on error {e eo} {
+	    puts stderr "LISTENER ERROR: '$e' ($eo)"
+	} finally {
+	    return $socket
+	}
     }
 
     namespace export -clear *
