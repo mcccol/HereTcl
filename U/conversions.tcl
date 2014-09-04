@@ -331,7 +331,7 @@ namespace eval ::conversions {
 	    $interp dict set ::response -dynamic 0
 
 	dict set rsp -interp $interp
-	set x [Url parse [dict get $rsp -url]]
+	set x [Url parse [dict get $rsp -Url]]
 	set path [dict get $x -path]
 	dict set x -path [file join [file dirname $path] .tml]
 
@@ -379,7 +379,7 @@ namespace eval ::conversions {
 	}
 
 	set dp [file join $prefix $suffix]
-	set url [string trimright [dict get $rsp -url] /]
+	set url [string trimright [dict get $rsp -Url] /]
 	Debug.convert {dirList: $dp - $url - $suffix - ($files)}
 	
 	set dirlist "<table class='dirlist' border='1'>\n"
@@ -509,7 +509,7 @@ namespace eval ::conversions {
 	}
 
 	set dp [file join $prefix $suffix]
-	set url [string trimright [dict get $rsp -url] /]
+	set url [string trimright [dict get $rsp -Url] /]
 	Debug.convert {dirList: $dp - $url - $suffix - ($files)}
 	
 	set dirlist "<table class='dirlist' border='1'>\n"

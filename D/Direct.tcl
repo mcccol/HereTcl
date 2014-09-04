@@ -147,38 +147,15 @@ oo::class create Direct {
 	return [dict merge $rsp [my $cmd $rsp {*}$args]]
     }
 
-    method do {rsp} {
-	Debug.direct {[self] do $rsp}
-	variable methods
-
-	if {[dict exists $rsp -Url extra]} {
-	    set suffix [dict get $rsp -Url extra]
-	} else {
-	    set suffix [dict get $rsp -Url path]
-	}
-
-	# search for a matching command prefix
-	foreach f {cmd extra fprefix cprefix} v [my Match $suffix] {
-	    set $f $v
-	    dict set rsp -Url $f $v
-	}
-
-	if {![dict exists $methods $cmd] eq {}} {
-	    Debug.direct {default not found looking for $cmd in ($methods)}
-	    return [H NotFound $rsp]
-	}
-
-	variable parameters
-	if {!$parameters} {
-	    Debug.direct {calling method $cmd [string range $argl 0 80]... [dict keys $argll]}
-	    set result [my $cmd $rsp]
-	    return [dict merge $rsp $result]
-	}
+    # Parameters - extract actual parameters from request for formal parameters in method
+    method Parameters {r} {
+	set cmd [dict get $r -Url cmd]
 
 	# get the formal parameters and args-status of the method
+	variable methods
 	lassign [dict get $methods $cmd] needargs params
 
-	dict set rsp -Query [set qd [Query parse $rsp]]
+	dict set r -Query [set qd [Query parse $r]]
 	
 	Debug.direct {cmd:'$cmd' extra:'$extra' needargs:$needargs params:'$params' qd:[dict keys $qd]}
 
@@ -216,9 +193,47 @@ oo::class create Direct {
 	    }
 	}
 
+	return [list $argl $argll]
+    }
+
+    # Url - convert request -Url to useful components
+    method Url {r} {
+	if {[dict exists $r -Url extra]} {
+	    set suffix [dict get $r -Url extra]	;# left behind by previous Direct
+	} else {
+	    set suffix [dict get $r -Url path]
+	}
+
+	# search for a matching command prefix
+	foreach f {cmd extra fprefix cprefix} v [my Match $suffix] {
+	    set $f $v
+	    dict set r -Url $f $v
+	}
+	return $r
+    }
+
+    method do {r} {
+	set r [my Url $r]	;# expand out the -Url element a bit
+
+	Debug.direct {[self] do $r}
+
+	variable methods
+	set cmd [dict get $r -Url cmd]
+	if {![dict exists $methods $cmd] eq {}} {
+	    Debug.direct {default not found looking for $cmd in ($methods)}
+	    return [H NotFound $r]
+	}
+
+	variable parameters
+	if {$parameters} {
+	    lassign [my Parameters $r] argl argll
+	} else {
+	    set argl {}; set argll {}
+	}
+
 	Debug.direct {calling method $cmd [string range $argl 0 80]... [dict keys $argll]}
 
-	tailcall my Call $rsp $cmd {*}$argl {*}$argll
+	tailcall my Call $r $cmd {*}$argl {*}$argll	;# perform the direct call
     }
 
     self method new {args} {
