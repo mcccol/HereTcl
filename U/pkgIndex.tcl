@@ -1,5 +1,5 @@
 package ifneeded Debug 2.0 [list source [file join $dir Debug.tcl]]
-package ifneeded Http 3.0 [list source [file join $dir Http.tcl]]
+
 package ifneeded Convert 1.0 [list source [file join $dir Convert.tcl]]
 package ifneeded conversions 1.0 [list source [file join $dir conversions.tcl]]
 
