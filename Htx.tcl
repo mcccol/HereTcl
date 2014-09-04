@@ -629,7 +629,7 @@ proc Tx {args} {
 
 		send {
 		    # the asynchronous content generator has some content to send
-		    state_log {reply tx $op $socket $trx $sent [llength $pending]}
+		    state_log {rq tx $op $socket $trx $sent [llength $pending]}
 		    lassign $rest eof content
 
 		    # apply gzipping

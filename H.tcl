@@ -56,7 +56,6 @@ namespace eval H {
     variable home [file dirname [file normalize [info script]]]
 
     proc BGERROR {lower e eo} {
-	puts stderr BGERROR:$args
 	set rest [lassign [dict get $eo -errorcode] errcode subcode]
 	switch -- $errcode {
 	    default {
@@ -110,7 +109,7 @@ namespace eval H {
 }
 
 # install our own default bgerror
-interp bgerror {} [list [namespace code [list H BGERROR]] [interp bgerror {}]]
+interp bgerror {} [list H BGERROR [interp bgerror {}]]
 
 package provide H 8.0
 
@@ -282,6 +281,7 @@ namespace eval H {
 		}
 	    }
 	}
+
 	return $rq
     }
 

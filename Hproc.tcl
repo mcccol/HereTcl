@@ -149,7 +149,7 @@ proc process {R} {
 		Debug.httpd {process returned ($result)}
 		if {[dict size $result]} {
 		    set r $result
-		    if {[dict exists $result -suspend]} {
+		    if {[dict exists $result -rsp -suspend]} {
 			set suspend 1
 		    }
 		}
