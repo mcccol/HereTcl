@@ -104,34 +104,12 @@ proc HeaderCheck {r} {
 	dict set r -Url host [host [dict get $r -Url]]
     }
 
-    # move-aside/rename fields whose names are the same in request/response
-    foreach n {cache-control pragma} {
-	if {[dict exists $r $n]} {
-	    dict set r -$n [dict get $r $n]
-	    dict unset r $n
-	}
-    }
-
     if {0} {
 	#### could be done where it's used, if it's used
 	# remove 'netscape extension' length= from if-modified-since
 	if {[dict exists $r if-modified-since]} {
 	    dict set r if-modified-since [lindex [split [dict get $r if-modified-since] {;}] 0]
 	}
-    }
-
-    if {0} {
-	# filter out all X-* form headers, move them to -x-* forms
-	# so we don't re-send them in reply
-	foreach x [dict keys $r x-*] {
-	    dict set r -$x [dict get $r $x]
-	    dict unset r $x
-	}
-    }
-
-    if {[dict exists $r etag]} {
-	# copy etag aside, so domains can provide their own
-	dict set r -Header etag [dict get $r etag]
     }
 
     Debug.httpdlow {HeaderCheck done: $r}
