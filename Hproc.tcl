@@ -1,21 +1,6 @@
 # Hproc - request processing support
-
-# rxCORS - respond to CORS request with 
-proc rxCORS {r} { 
-    if {[dict get $r -Header method] eq "OPTIONS"
-	&& [dict exists $r access-control-request-method]} {
-	# simplistic CORS response
-	dict set r access-control-allow-origin *
-	dict set r access-control-allow-methods "POST, GET, OPTIONS"
-	dict set r access-control-max-age 1000
-	dict set r access-control-allow-headers *
-	dict set r -code 200
-
-	#tx_$socket $r	;# send the CORS response
-
-	return -code return $r	;# no more processing
-    }
-}
+#
+# This is a full-service request processor, with all the extras
 
 variable methods {GET PUT POST HEAD OPTIONS}
 variable maxurilen 0	;# maximum length of URI

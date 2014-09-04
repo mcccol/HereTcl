@@ -495,6 +495,7 @@ variable rx_defaults [defaults {
     opts {}
     timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxSizedEntity 20}
     ctype text/html
+    full_process 1	;# completely read request,headers,entity before calling process
 }]
 
 # RxDead - called when Rx coroutine disappears
@@ -559,10 +560,11 @@ proc Rx {args} {
 	    state_log {R rx request $socket $transaction}
 
 	    # receive and process packet
-	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {}]
-	    set R [RxProcess $R]		;# receive the request
-
-	    dict set R -Header state Processing
+	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -state Empty]
+	    if {[info exists full_process] && $full_process} {
+		set R [RxProcess $R]		;# receive the request
+		dict set R -Header state Processing
+	    }
 	    process $R	;# Process the request+entity in a bespoke command
 
 	    state_log {R rx processed $socket $transaction}
