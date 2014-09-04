@@ -9,6 +9,7 @@ Debug on error
 Debug off listener
 Debug off httpd
 Debug off httpdlow
+Debug off httpdtx
 Debug off httpdtxlow
 Debug off entity
 Debug define cache
@@ -63,7 +64,9 @@ proc test_dict {token args} {
     }
 
     set r {}
-    foreach {n v} [get_test $token] {
+    set d [get_test $token]
+    #puts stderr META:$d
+    foreach {n v} $d {
 	set n [string tolower $n]
 	if {[dict exists $args $n]} {
 	    if {![string match [dict get $args $n] $v]} {
@@ -94,8 +97,7 @@ after 0 {::apply {{} {
 	    
 	    test_dict $token {
 		-code 200
-		connection close
-		content-type {text/html; charset=utf-8}
+		content-type text/html
 		server {H *}
 		vary accept-encoding
 		content-length 11
@@ -160,6 +162,71 @@ after 0 {::apply {{} {
 	} -result {HTTP 400}
     }
 
+    test simple-ERROR {generate an error, make sure it's received} -setup {
+	set ::listener [H listen error {::apply {{r args} {dict set r -code 1; return $r}}} process [list ::apply {{r} {
+	    Debug off error
+	    expr 1/0	;# provoke an error
+	    Debug on error
+	}}] {*}$::defaults $::port]
+    } -body {
+	set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	
+	::http::wait $token
+	
+	test_dict $token {
+	    -http {HTTP/1.1 500 Internal Server Error}
+	    content-type text/html
+	}
+    } -cleanup { 
+	chan close $::listener
+    }
+
+    test simple-ABORT {generate a protocol-level abort, make sure it's received} -setup {
+	set ::om $H::methods
+	set H::methods {}	;# no matter what we send it will abort
+	set ::listener [H listen process [list ::apply {{r} {}}] $::port]
+    } -body {
+	set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	::http::wait $token
+	
+	test_dict $token {
+	    -http {HTTP/1.1 405 Method Not Allowed}
+	}
+    } -cleanup {
+	set H::methods $::om
+	chan close $::listener
+    }
+
+    test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
+	set ::listener [H listen process [list ::apply {{r} {
+	    set entity [dict get $r -entity]; dict unset r -entity
+	    #puts Rx:[binary encode hex $entity]
+	    dict set r -rsp -content $entity
+	    dict set r -rsp content-length [string length $entity]
+	    dict set r -rsp content-type application/octet-stream
+	    return $r	;# this should echo the body
+	}}] {*}$::defaults $::port]
+    } -body {
+	# simple-BINARY just 
+	set ::body ""
+	for {set i 0} {$i < 1024} {incr i} {
+	    append ::body [binary format c [expr {int(rand() * 256)}]]
+	}
+	#puts stderr RQ:[binary encode hex $::body]
+	set token [::http::geturl http://localhost:$::port/ -type application/octet-stream -timeout 100 -query $::body]
+	::http::wait $token
+	#puts stderr "META:[::http::meta $token]"
+	if {[::http::data $token] eq $::body} {
+	    set result ""
+	} else {
+	    set result "'[binary encode hex $::body]' != '[binary encode hex [::http::data $token]]'"
+	}
+	::http::cleanup $token
+	return $result
+    } -cleanup {
+	chan close $::listener
+    }
+
     if {1} {
 	test simple-GET-with-timeout {test 1 second timeout} -setup {
 	    set ::listener [H listen rx {timeout {"" 1} ondisconnect {::apply {{coro vars} {
@@ -208,70 +275,6 @@ after 0 {::apply {{} {
 	} -cleanup {
 	    chan close $::listener
 	} -result {TIMEOUT Header}
-    }
-
-    test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
-	set ::listener [H listen process [list ::apply {{r} {
-	    set entity [dict get $r -entity]; dict unset r -entity
-	    #puts Rx:[binary encode hex $entity]
-	    dict set r -content $entity
-	    dict set r content-length [string length $entity]
-	    return $r	;# this should echo the body
-	}}] {*}$::defaults $::port]
-    } -body {
-	# simple-BINARY just 
-	set ::body ""
-	for {set i 0} {$i < 1024} {incr i} {
-	    append ::body [binary format c [expr {int(rand() * 256)}]]
-	}
-	#puts stderr RQ:[binary encode hex $::body]
-	set token [::http::geturl http://localhost:$::port/ -type application/octet-stream -timeout 100 -query $::body]
-	::http::wait $token
-	#puts stderr "META:[::http::meta $token]"
-	if {[::http::data $token] eq $::body} {
-	    set result ""
-	} else {
-	    set result "'[binary encode hex $::body]' != '[binary encode hex [::http::data $token]]'"
-	}
-	::http::cleanup $token
-	return $result
-    } -cleanup {
-	chan close $::listener
-    }
-
-    test simple-ERROR {generate an error, make sure it's received} -setup {
-	set ::listener [H listen error {::apply {{r args} {dict set r -code 1; return $r}}} process [list ::apply {{r} {
-	    Debug off error
-	    expr 1/0	;# provoke an error
-	    Debug on error
-	}}] {*}$::defaults $::port]
-    } -body {
-	set token [::http::geturl http://localhost:$::port/ -timeout 100]
-	
-	::http::wait $token
-	
-	test_dict $token {
-	    -http {HTTP/1.1 500 Internal Server Error}
-	    content-type {text/html; charset=utf-8}
-	}
-    } -cleanup { 
-	chan close $::listener
-    }
-
-    test simple-ABORT {generate a protocol-level abort, make sure it's received} -setup {
-	set ::om $H::methods
-	set H::methods {}	;# no matter what we send it will abort
-	set ::listener [H listen process [list ::apply {{r} {}}] $::port]
-    } -body {
-	set token [::http::geturl http://localhost:$::port/ -timeout 100]
-	::http::wait $token
-	
-	test_dict $token {
-	    -http {HTTP/1.1 405 Method Not Allowed}
-	}
-    } -cleanup {
-	set H::methods $::om
-	chan close $::listener
     }
 
     incr ::phase	;# these tests are complete

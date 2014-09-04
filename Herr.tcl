@@ -27,9 +27,9 @@ variable errStyle {
 }
 
 # construct an HTTP response containing a server error page
-proc ServerError {rsp error {eo ""}} {
+proc ServerError {rq error {eo ""}} {
     #puts stderr "ServerError: $error ($eo)"
-    Debug.error {Server Error: '$error' ($eo) $rsp}
+    Debug.error {Server Error: '$error' ($eo) $rq}
     corovar close; set close $error	;# this will cause the reader to close
 
     try {
@@ -78,10 +78,17 @@ proc ServerError {rsp error {eo ""}} {
 	Debug.error {Recursive Server Error: '$e1' ($eo1)}
 	set html [H tclarmour [H armour $error]]\n[H tclarmour [H armour $eo]]
     } finally {
-	# Errors are completely dynamic - no caching!
-	dict set rsp -code 500
-	dict set rsp content-type text/html
-	dict set rsp -content $html
-	return [NoCache $rsp]
+	dict update rq -rsp rsp {
+	    # Errors are completely dynamic - no caching!
+	    if {![info exists rsp]} {
+		set rsp [NoCache]
+	    } else {
+		set rsp [NoCache $rsp]
+	    }
+	    dict set rsp -code 500
+	    dict set rsp content-type text/html
+	    dict set rsp -content $html
+	}
+	return $rq
     }
 }

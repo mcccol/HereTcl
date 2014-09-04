@@ -73,6 +73,7 @@ proc HeaderCheck {r} {
     set uri [join [lrange $headers 1 end-1]]
     dict set r -Header uri $uri
 
+    # fill -Url
     if {[dict exists $r host]} {
 	# client sent Host: field
 	if {[string match http*:* $uri]} {
@@ -119,16 +120,18 @@ proc HeaderCheck {r} {
 	}
     }
 
-    # filter out all X-* form headers, move them to -x-* forms
-    # so we don't re-send them in reply
-    foreach x [dict keys $r x-*] {
-	dict set r -$x [dict get $r $x]
-	dict unset r $x
+    if {0} {
+	# filter out all X-* form headers, move them to -x-* forms
+	# so we don't re-send them in reply
+	foreach x [dict keys $r x-*] {
+	    dict set r -$x [dict get $r $x]
+	    dict unset r $x
+	}
     }
 
     if {[dict exists $r etag]} {
 	# copy etag aside, so domains can provide their own
-	dict set r -etag [dict get $r etag]
+	dict set r -Header etag [dict get $r etag]
     }
 
     Debug.httpdlow {HeaderCheck done: $r}
@@ -225,7 +228,7 @@ proc Header {r {one 0}} {
     corovar maxline	;# maximum header line length
     set socket [dict get $r -socket]
     chan configure $socket -blocking 0
-    dict incr R -state
+    dict set R -Header state Initial
 
     if {$one} {
 	set errmsg StartHeader
@@ -254,6 +257,7 @@ proc Header {r {one 0}} {
 	    } else {
 		# this terminates headers
 		Debug.httpdlow {[info coroutine] got [llength [split [dict get $r -Full] \n]] lines of header}
+		dict set R -Header state Headers
 		return $r
 	    }
 	} else {
@@ -263,6 +267,7 @@ proc Header {r {one 0}} {
 		if {![string match HTTP/* [lindex [split [dict get $r -Full] " "] end]]} {
 		    Bad $r "This isn't even HTTP"
 		}
+		dict set R -Header state Request
 		return $r	;# we only want the first line
 	    }
 	}
@@ -453,8 +458,7 @@ proc RxSizedEntity {r} {
 
 # RxEntity - return a request dict containing any Entity
 proc RxEntity {R} {
-    dict incr R -state
-
+    
     # Read Entity (if any)
     # TODO: 4.4.2 If a message is received with both
     # a Transfer-Encoding header field
@@ -481,11 +485,13 @@ proc RxEntity {R} {
 	}
 
 	if {[dict exists $te chunked]} {
+	    dict set R -Header state Chunking
 	    set R [RxChunked $R]
 	} else {
 	    Bad $R "Length Required" 411
 	}
     } elseif {[dict exists $R content-length]} {
+	dict set R -Header state Sized
 	set R [RxSizedEntity $R]
     } elseif {0} {
 	# this is a content-length driven entity transfer 411 Length Required
@@ -493,6 +499,7 @@ proc RxEntity {R} {
     }
     state_log {R rx entity [dict get $R -socket] [dict get $R -transaction]}
 
+    dict set R -Header state Entity
     return $R
 }
 
@@ -518,9 +525,8 @@ proc RxDead {coro s tx args} {
 }
 
 
-# RxHeaders - collec the headers
+# RxHeaders - collect the headers
 proc RxHeaders {R} {
-    dict incr R -state
     set R [Header $R]	;# collect all remaining headers
 
     # indicate to tx that a request with this transaction id
@@ -530,6 +536,7 @@ proc RxHeaders {R} {
     set R [Parse $R]
     set R [HeaderCheck $R]	;# parse $headers as a complete request header
 
+    dict set R -Header state Parsed
     state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
     return $R
 }
@@ -574,9 +581,11 @@ proc Rx {args} {
 	    state_log {R rx request $socket $transaction}
 
 	    # receive and process packet
-	    set R [list -socket $socket -transaction [incr transaction] -tx $tx]
+	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -rsp {}]
 	    set R [RxProcess $R]		;# receive the request
-	    dict incr R -state; process $R	;# Process the request+entity in a bespoke command
+
+	    dict set R -Header state Processing
+	    process $R	;# Process the request+entity in a bespoke command
 
 	    state_log {R rx processed $socket $transaction}
 	}

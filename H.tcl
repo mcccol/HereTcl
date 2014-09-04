@@ -112,52 +112,13 @@ namespace eval H {
 # install our own default bgerror
 interp bgerror {} [list [namespace code [list H BGERROR]] [interp bgerror {}]]
 
-package provide H 7.0
+package provide H 8.0
 
 # load minimal H components
 H::load Hrx.tcl Htx.tcl Hproc.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {
-    # Ok - construct an HTTP Ok response
-    proc Ok {rsp args} {
-	if {[llength $args]%2} {
-	    set content [lindex $args end]
-	    set args [lrange $args 0 end-1]
-	}
-
-	set rsp [dict merge $rsp $args]
-
-	if {[dict exists $rsp -code]} {
-	    set code [dict get $rsp -code]
-	} else {
-	    set code 200
-	}
-	dict set rsp -code $code
-
-	if {[info exists content]} {
-	    dict set rsp -content $content
-	    if {![dict exists $rsp content-length]} {
-		dict set rsp content-length [string length $content]
-	    }
-	}
-
-	return $rsp
-    }
-
-    # construct an HTTP Bad response
-    proc Bad {rsp message {code 400}} {
-	if {[dict exists $rsp -Header full]} {
-	    dict set rsp -content <p>[H armour $message]</p>
-	    dict set rsp -code $code
-	    set rsp [NoCache $rsp]
-	    [dict get $rsp -tx] reply $rsp
-	} else {
-	    # this isn't even HTTP - don't bother with the Tx
-	}
-	return -code error -errorcode [list HTTP $code] $message
-    }
-
     # DateInSeconds - convert HTTP date to Tcl time
     proc DateInSeconds {date} {
 	if {[string is integer -strict $date]} {
@@ -173,52 +134,58 @@ namespace eval H {
 	}
     }
 
+    # Now - return the current time and date in HTTP format
+    proc Now {} {
+	return [clock format [clock seconds] -format {%a, %d %b %Y %T GMT} -gmt true]
+    }
+
     # Date - return an HTTP date given a Tcl time
     proc Date {{seconds ""}} {
 	if {$seconds eq ""} {
 	    set seconds [clock seconds]
 	}
-
 	return [clock format $seconds -format {%a, %d %b %Y %T GMT} -gmt true]
     }
 
     # Cache - HTTP contents may be Cached
-    proc Cache {rsp {age 0} {realm ""}} {
-	if {[string is integer -strict $age]} {
-	    # it's an age
-	    if {$age != 0} {
-		dict set rsp expires [Date [expr {[clock seconds] + $age}]]
-		Debug.caching {Http Cache: numeric age expires '[dict get $rsp expires]'}
+    proc Cache {rq {age 0} {realm ""}} {
+	dict update rq -rsp rsp {
+	    if {[string is integer -strict $age]} {
+		# it's an age
+		if {$age != 0} {
+		    dict set rsp expires [Date [expr {[clock seconds] + $age}]]
+		    Debug.caching {Http Cache: numeric age expires '[dict get $rsp expires]'}
+		} else {
+		    Debug.caching {Http Cache: turn off expires}
+		    catch {dict unset rsp expires}
+		    catch {dict unset rsp -expiry}
+		}
 	    } else {
-		Debug.caching {Http Cache: turn off expires}
-		catch {dict unset rsp expires}
-		catch {dict unset rsp -expiry}
+		dict set rsp -expiry $age	;# remember expiry verbiage for caching
+		dict set rsp expires [Date [clock scan $age]]
+		Debug.caching {Http Cache: text age expires '$age' - '[dict get $rsp expires]'}
+		set age [expr {[clock scan $age] - [clock seconds]}]
 	    }
-	} else {
-	    dict set rsp -expiry $age	;# remember expiry verbiage for caching
-	    dict set rsp expires [Date [clock scan $age]]
-	    Debug.caching {Http Cache: text age expires '$age' - '[dict get $rsp expires]'}
-	    set age [expr {[clock scan $age] - [clock seconds]}]
-	}
 
-	if {$realm ne ""} {
-	    dict set rsp cache-control $realm
-	}
+	    if {$realm ne ""} {
+		dict set rsp cache-control $realm
+	    }
 
-	if {$age} {
-	    if {[dict exists $rsp cache-control]} {
-		dict append rsp cache-control ",max-age=$age"
-	    } else {
-		dict set rsp cache-control "max-age=$age"
+	    if {$age} {
+		if {[dict exists $rsp cache-control]} {
+		    dict append rsp cache-control ",max-age=$age"
+		} else {
+		    dict set rsp cache-control "max-age=$age"
+		}
 	    }
 	}
 
-	Debug.caching {Http Cache: ($age) cache-control: [dict get? $rsp cache-control]}
-	return $rsp
+	Debug.caching {Http Cache: ($age) cache-control: [dict get? $rq -rsp cache-control]}
+	return $rq
     }
 
     # NoCache - HTTP contents may not be Cached
-    proc NoCache {rsp} {
+    proc NoCache {{rsp {}}} {
 	dict set rsp cache-control "no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0"; # HTTP/1.1
 	dict set rsp expires "Sun, 01 Jul 2005 00:00:00 GMT"	;# deep past
 	dict set rsp pragma "no-cache"	;# HTTP/1.0
@@ -226,31 +193,79 @@ namespace eval H {
     }
 
     # NotFound - construct an HTTP NotFound response
-    proc NotFound {rsp {message "<P>Not Found</P>"}} {
-	dict set rsp -content $message
-	dict set rsp -code 404
-	return [NoCache $rsp]
+    proc NotFound {rq {message "<P>Not Found</P>"}} {
+	dict update rq -rsp rsp {
+	    set rsp [NoCache $rsp]
+	    dict set rsp -content $message
+	    dict set rsp -code 404
+	}
+	return $rq
     }
 
     # NotModified - construct an HTTP NotModified response
-    proc NotModified {rsp} {
-	# remove content-related stuff
-	foreach n [dict keys $rsp content-*] {
-	    if {$n ne "content-location"} {
-		dict unset rsp $n
+    proc NotModified {rq} {
+	dict update rq -rsp rsp {
+	    if {[info exists rsp]} {
+		# the response MUST NOT include other entity-headers
+		# than Date, Expires, Cache-Control, Vary, Etag, Content-Location
+		set rsp [dict filter $rsp script {k v} {
+		    expr {$k ni {date expires cache-control vary etag content-location} && ![string match -* $key]}
+		}]
 	    }
+	    dict set rsp -code 304
 	}
 
-	# discard some fields
-	set rsp [dict filter $rsp script {k v} {
-	    expr {$k ni {transfer-encoding -chunked -content}}
-	}]
+	return $q
+    }
 
-	# the response MUST NOT include other entity-headers
-	# than Date, Expires, Cache-Control, Vary, Etag, Content-Location
-	dict set result -code 304
+    # construct an HTTP Bad response
+    proc Bad {rq message {code 400}} {
+	if {[dict exists $rq -Header full]} {
+	    dict update rq -rsp rsp {
+		if {![info exists rsp]} {
+		    set rsp {}
+		}
 
-	return $result
+		dict set rsp -content <p>[H armour $message]</p>
+		dict set rsp -code $code
+		set rsp [NoCache $rsp]
+	    }
+	    [dict get $rq -tx] reply $rq
+	} else {
+	    # this isn't even HTTP - don't bother with the Tx
+	}
+	return -code error -errorcode [list HTTP $code] $message
+    }
+
+    # Ok - construct an HTTP Ok response
+    proc Ok {rq args} {
+	if {[llength $args]%2} {
+	    set content [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	}
+
+	dict update rq -rsp rsp {
+	    if {[info exists rsp]} {
+		set rsp [dict merge $rsp $args]
+	    } else {
+		set rsp $args
+	    }
+
+	    if {[dict exists $rsp -code]} {
+		set code [dict get $rsp -code]
+	    } else {
+		set code 200
+	    }
+	    dict set rsp -code $code
+
+	    if {[info exists content]} {
+		dict set rsp -content $content
+		if {![dict exists $rsp content-length]} {
+		    dict set rsp content-length [string length $content]
+		}
+	    }
+	}
+	return $rq
     }
 
     # Pipeline - listener passes control here, with a new socket
