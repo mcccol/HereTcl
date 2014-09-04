@@ -201,9 +201,9 @@ after 0 {::apply {{} {
 	set ::listener [H listen process [list ::apply {{r} {
 	    set entity [dict get $r -entity]; dict unset r -entity
 	    #puts Rx:[binary encode hex $entity]
-	    dict set r -rsp -content $entity
-	    dict set r -rsp content-length [string length $entity]
-	    dict set r -rsp content-type application/octet-stream
+	    dict set r -reply -content $entity
+	    dict set r -reply content-length [string length $entity]
+	    dict set r -reply content-type application/octet-stream
 	    return $r	;# this should echo the body
 	}}] {*}$::defaults $::port]
     } -body {

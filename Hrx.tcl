@@ -581,7 +581,7 @@ proc Rx {args} {
 	    state_log {R rx request $socket $transaction}
 
 	    # receive and process packet
-	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -rsp {}]
+	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {}]
 	    set R [RxProcess $R]		;# receive the request
 
 	    dict set R -Header state Processing

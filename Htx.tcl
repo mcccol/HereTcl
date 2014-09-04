@@ -29,14 +29,14 @@ proc log {r} {
     lappend line \"[dict get? $r -Header full]\"
 
     # status we returned to it
-    if {[dict exists $r -rsp -code]} {
+    if {[dict exists $r -reply -code]} {
 	lappend line [dict get? $r -code]
     } else {
 	lappend line 200
     }
 
     # content byte length
-    lappend line [dict get? $r -rsp content-length]
+    lappend line [dict get? $r -reply content-length]
 
     # referer, useragent, cookie, if any
     if {[dict exists $r referer]} {
@@ -155,7 +155,7 @@ proc if-range {r etag} {
 # applies to it.
 proc TxConditional {} {
     corovar rq
-    dict with rq -rsp reply {
+    dict with rq -reply reply {
 	set etag \"[string trim [dict get $rq etag] \"]\"
 
 	# Check if-none-match
@@ -209,7 +209,7 @@ proc TxConditional {} {
 # TxCharset - ensure correctly encoded content in response
 proc TxCharset {} {
     corovar rq
-    dict update rq -rsp reply {
+    dict update rq -reply reply {
 	if {[dict exists $reply -chconverted]
 	    || ![dict exists $reply content-type]
 	} {
@@ -240,7 +240,7 @@ proc TxCharset {} {
 
 proc TxRange {} {
     corovar rq
-    dict update rq -rsp reply {
+    dict update rq -reply reply {
 	# handle range for 200
 	# NOTE: not currently supporting range request
 	set ranges [dict get $reply range]	;# client requested a range of content
@@ -317,7 +317,7 @@ proc TxFile {fd args} {
     set args [lrange $args 0 end-1]
     Debug.httpdtx {TxFile ($args) - ($rq)}
 
-    dict update rq -rsp reply -tx tx -socket socket {
+    dict update rq -reply reply -tx tx -socket socket {
 	set reply [dict merge $reply $args]
 
 	# the app has returned an open file instead of literal content
@@ -368,7 +368,7 @@ proc TxSend {} {
     corovar socket
 
     Debug.httpdtxlow {TxSend $rq}
-    dict update rq -rsp reply {
+    dict update rq -reply reply {
 	# ensure the reply code is set
 	if {![dict exists $reply -code]} {
 	    dict set reply -code [set code 200]	;# presume it's ok
@@ -463,7 +463,7 @@ proc TxSend {} {
     }
 
     # set up entity transmission header elements
-    dict update rq -rsp reply {
+    dict update rq -reply reply {
 	if {[dict get? $rq -Header method] eq "HEAD"} {
 	    # All responses to the HEAD request method MUST NOT
 	    # include a message-body but may contain all the content
@@ -541,13 +541,13 @@ proc TxSend {} {
 	}
     }
 
-    if {[dict exists $rq -rsp -process]} {
+    if {[dict exists $rq -reply -process]} {
 	# complete -process sending, blocking Tx in the meantime
-	set rq [{*}[dict get $rq -rsp -process] $rq]
+	set rq [{*}[dict get $rq -reply -process] $rq]
 	return	;# we let the -process command handle the rest
     } else {
 	# complete -content sending, then we're done
-	dict update rq -rsp reply {
+	dict update rq -reply reply {
 
 	    TxHeaders $socket $reply	;# emit $reply's headers
 
@@ -641,7 +641,7 @@ proc Tx {args} {
 			}
 		    }
 
-		    if {[dict exists $rq -rsp transfer-encoding]} {
+		    if {[dict exists $rq -reply transfer-encoding]} {
 			# send some chunks
 			variable chunksize
 			while {[string length $content]} {

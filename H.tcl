@@ -149,7 +149,7 @@ namespace eval H {
 
     # Cache - HTTP contents may be Cached
     proc Cache {rq {age 0} {realm ""}} {
-	dict update rq -rsp rsp {
+	dict update rq -reply rsp {
 	    if {[string is integer -strict $age]} {
 		# it's an age
 		if {$age != 0} {
@@ -180,7 +180,7 @@ namespace eval H {
 	    }
 	}
 
-	Debug.caching {Http Cache: ($age) cache-control: [dict get? $rq -rsp cache-control]}
+	Debug.caching {Http Cache: ($age) cache-control: [dict get? $rq -reply cache-control]}
 	return $rq
     }
 
@@ -194,7 +194,7 @@ namespace eval H {
 
     # NotFound - construct an HTTP NotFound response
     proc NotFound {rq {message "<P>Not Found</P>"}} {
-	dict update rq -rsp rsp {
+	dict update rq -reply rsp {
 	    set rsp [NoCache $rsp]
 	    dict set rsp -content $message
 	    dict set rsp -code 404
@@ -204,7 +204,7 @@ namespace eval H {
 
     # NotModified - construct an HTTP NotModified response
     proc NotModified {rq} {
-	dict update rq -rsp rsp {
+	dict update rq -reply rsp {
 	    if {[info exists rsp]} {
 		# the response MUST NOT include other entity-headers
 		# than Date, Expires, Cache-Control, Vary, Etag, Content-Location
@@ -221,7 +221,7 @@ namespace eval H {
     # construct an HTTP Bad response
     proc Bad {rq message {code 400}} {
 	if {[dict exists $rq -Header full]} {
-	    dict update rq -rsp rsp {
+	    dict update rq -reply rsp {
 		if {![info exists rsp]} {
 		    set rsp {}
 		}
@@ -244,7 +244,7 @@ namespace eval H {
 	    set args [lrange $args 0 end-1]
 	}
 
-	dict update rq -rsp rsp {
+	dict update rq -reply rsp {
 	    if {[info exists rsp]} {
 		set rsp [dict merge $rsp $args]
 	    } else {

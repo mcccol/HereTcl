@@ -78,7 +78,7 @@ proc ServerError {rq error {eo ""}} {
 	Debug.error {Recursive Server Error: '$e1' ($eo1)}
 	set html [H tclarmour [H armour $error]]\n[H tclarmour [H armour $eo]]
     } finally {
-	dict update rq -rsp rsp {
+	dict update rq -reply rsp {
 	    # Errors are completely dynamic - no caching!
 	    if {![info exists rsp]} {
 		set rsp [NoCache]
