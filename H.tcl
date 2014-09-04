@@ -232,7 +232,7 @@ namespace eval H {
 	    dict set rsp -code 304
 	}
 
-	return $q
+	return $rq
     }
 
     # construct an HTTP Bad response
