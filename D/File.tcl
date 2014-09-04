@@ -26,16 +26,16 @@ oo::class create File {
 	classvar mime
 	set ext [string trim [file extension $path] .]
 	if {[dict exists $mime $ext]} {
-	    dict set r content-type [dict get $mime $ext]
+	    dict set r -reply content-type [dict get $mime $ext]
 	}
 
 	# load the file contents
 	set fd [open $path r]
 	chan configure $fd -translation binary
-	dict set r -content [read $fd]
+	dict set r -reply -content [read $fd]
 	close $fd
 
-	dict set r -code 200
+	dict set r -reply -code 200
 	return $r
     }
 
@@ -103,7 +103,7 @@ oo::class create File {
 	    variable expires
 	    if {![dict exists $r -expiry]
 		&& [info exists expires]} {
-		dict set r -expiry $expires
+		dict set r -reply -expiry $expires
 	    }
 	    if {[dict exists $r -expiry]} {
 		variable crealm; set r [H Cache $r [dict get $r -expiry] $crealm]
@@ -111,7 +111,7 @@ oo::class create File {
 
 	    # set the file mod time
 	    set mtime [file mtime $path]
-	    dict set r last-modified [H Date $mtime]
+	    dict set r -reply last-modified [H Date $mtime]
 	} on error {e eo} {
 	    Debug.file {Error $e ($eo)}
 	    set r [H NotFound $r "<p>File '$opath' doesn't exist. '$path' '$e' ($eo)</p>"]

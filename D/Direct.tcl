@@ -267,7 +267,7 @@ oo::class create DirectSimple {
     # Call - invoke command sans R - expect HTML
     # command may still access R using uplevel
     method Call {R cmd args} {
-	dict set R -content [my $cmd {*}$args]
+	dict set R -reply -content [my $cmd {*}$args]
 	return $R
     }
 
