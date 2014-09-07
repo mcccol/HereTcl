@@ -157,7 +157,7 @@ oo::class create Direct {
 
 	dict set r -Query [set qd [Query parse $r]]
 	
-	Debug.direct {cmd:'$cmd' extra:'$extra' needargs:$needargs params:'$params' qd:[dict keys $qd]}
+	Debug.direct {cmd:'$cmd' needargs:$needargs params:'$params' qd:[dict keys $qd]}
 
 	set argl {}
 	array set used {}

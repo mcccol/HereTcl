@@ -594,6 +594,7 @@ proc Tx {args} {
     set continue 0	;# no 100-continue pending
     set trx 0
     set ns [namespace current]
+    set passthru 0
 
     Debug.listener {start Tx [info coroutine]}
     try {
@@ -726,6 +727,13 @@ proc Tx {args} {
 		    append close "Rx dying"		;# Tx should close too
 		}
 
+		passthru {
+		    # Rx indicates it's closing due to passthrough
+		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
+		    set passthru 1
+		    append close "Rx passthru"		;# Tx should close too
+		}
+
 		default {
 		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
 		    Debug.error {[info coroutine] Tx got '$op' op.  with ($rest)}
@@ -789,7 +797,9 @@ proc Tx {args} {
 	    $gzipper close	;# delete stream
 	}
 
-	catch {chan close $socket write}
+	if {!$passthru} {
+	    catch {chan close $socket write}
+	}
 	state_log {"" tx closed $socket $trx $sent [llength $pending]}
     }
 }

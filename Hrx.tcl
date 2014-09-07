@@ -112,8 +112,27 @@ proc HeaderCheck {r} {
 	}
     }
 
+    dict set r -Header state HeaderCheck
     Debug.httpdlow {HeaderCheck done: $r}
     return $r
+}
+
+# ParseRQ - unpack request/status line into its fields
+proc ParseRQ {R line} {
+    dict set R -Header full $line	;# record the first line as request/status line
+    if {[string match HTTP/* $line]} {
+	# Status-Line = HTTP-Version SP Status-Code SP Reason-Phrase CRLF
+	dict set R -Header reason [join [lassign [split [dict get $R -Header full]] version status]]
+	dict set R -Header status $status
+    } else {
+	# Request-Line = Method SP Request-URI SP HTTP-Version CRLF
+	foreach name {method uri version} value [split $line] {
+	    set $name $value
+	    dict set R -Header $name $value
+	}
+    }
+
+    dict set R -Header version [lindex [split $version /] end]
 }
 
 # Parse - split request/response line into header -Header fields
@@ -130,6 +149,7 @@ proc Parse {R} {
     foreach element [lassign [split $lines \n] firstline] {
 	set value [string trim [join [lassign [split $element :] key] :]]
 	set key [string tolower [string trim $key]]
+	if {$key eq ""} continue
 	if {[dict exists $R $key]} {
 	    # turn multiply occurring keys into a list of values
 	    if {![dict exists $R -Header multiple $key]} {
@@ -144,23 +164,9 @@ proc Parse {R} {
 	}
     }
 
-    # unpack request/status line into its fields
-    dict set R -Header full $firstline	;# record the first line as request/status line
-    if {[string match HTTP/* $firstline]} {
-	# Status-Line = HTTP-Version SP Status-Code SP Reason-Phrase CRLF
-	dict set R -Header reason [join [lassign [split [dict get $R -Header full]] version status]]
-	dict set R -Header status $status
-    } else {
-	# Request-Line = Method SP Request-URI SP HTTP-Version CRLF
-	foreach name {method uri version} value [split $firstline] {
-	    set $name $value
-	    dict set R -Header $name $value
-	}
-    }
-
-    dict set R -Header version [lindex [split $version /] end]
+    set R [ParseRQ $R $firstline]	;# fill in Header
     dict set R -Header clientheaders $clientheaders
-
+    dict set R -Header state Parsed
     return $R
 }
 
@@ -206,16 +212,15 @@ proc Header {r {one 0}} {
     corovar maxline	;# maximum header line length
     set socket [dict get $r -socket]
     chan configure $socket -blocking 0
-    dict set R -Header state Initial
 
     if {$one} {
-	set errmsg StartHeader
+	set state Request
     } else {
-	set errmsg Header
+	set state Headers
     }
 
     while {![catch {chan eof $socket} eof] && !$eof} {
-	RxWait $errmsg
+	RxWait $state
 	set len [gets $socket line]
 	if {$len == -1} {
 	    # we have no line - can we even get a line?
@@ -235,7 +240,7 @@ proc Header {r {one 0}} {
 	    } else {
 		# this terminates headers
 		Debug.httpdlow {[info coroutine] got [llength [split [dict get $r -Full] \n]] lines of header}
-		dict set R -Header state Headers
+		dict set R -Header state $state
 		return $r
 	    }
 	} else {
@@ -245,7 +250,7 @@ proc Header {r {one 0}} {
 		if {![string match HTTP/* [lindex [split [dict get $r -Full] " "] end]]} {
 		    Bad $r "This isn't even HTTP"
 		}
-		dict set R -Header state Request
+		dict set R -Header state $state
 		return $r	;# we only want the first line
 	    }
 	}
@@ -514,7 +519,6 @@ proc RxHeaders {R} {
     set R [Parse $R]
     set R [HeaderCheck $R]	;# parse $headers as a complete request header
 
-    dict set R -Header state Parsed
     state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
     return $R
 }
@@ -544,6 +548,7 @@ proc Rx {args} {
     # This can be used as a debugging aid to track coro state
     #trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
 
+    set passthru 0
     set headers {}
     set transaction 0	;# unique count of packets received by this receiver
     set R {}
@@ -558,12 +563,12 @@ proc Rx {args} {
 	       && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
 	   } {
 	    state_log {R rx request $socket $transaction}
-
+	    
 	    # receive and process packet
-	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -state Empty]
+	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
 	    set R [RxProcess $R]		;# receive the request
-	    process $R	;# Process the request+entity in a bespoke command
 
+	    process $R	;# Process the request+entity in a bespoke command
 	    state_log {R rx processed $socket $transaction}
 	}
     } trap HTTP {e eo} {
@@ -577,6 +582,11 @@ proc Rx {args} {
 	    state_log {R rx timeout $socket $transaction}
 	    Debug.httpd {Httpd $e}
 	}
+    } trap PASSTHRU {e eo} {
+	# the process has handed off our socket to another process
+	# we have nothing to do but wait
+	set passthru 1
+	puts stderr "[info coroutine] PASSTHRU"
     } on error {e eo} {
 	state_log {R rx error $socket $transaction}
 	Debug.error {Rx $socket ERROR '$e' ($eo)}
@@ -589,7 +599,7 @@ proc Rx {args} {
 	Debug.error {Rx $socket BREAK '$e' ($eo)}
     } on ok {e eo} {
 	# this happens on normal return
-
+	
 	if {[catch {chan eof $socket} eof] || $eof} {
 	    set reason "EOF on socket"
 	} elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {
@@ -599,23 +609,27 @@ proc Rx {args} {
 	} {
 	    set reason unknown
 	}
-
+	
 	state_log {R rx closed $socket $transaction $reason}
 	Debug.httpd {Normal termination: $reason}
     } finally {
 	if {[info exists timer]} {
 	    catch {::after cancel $timer}; unset timer
 	}
-
+	
 	Debug.listener {Rx [info coroutine] DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1 || headers [llength $headers]}
-
-	catch {Readable $socket}	;# turn off the chan event readable
-	catch {chan close $socket read}	;# close the socket read side
-	catch {$tx closing}		;# inform Tx coro that we're closing
+	
+	if {!$passthru} {
+	    catch {Readable $socket}	;# turn off the chan event readable
+	    catch {chan close $socket read}	;# close the socket read side
+	    catch {$tx closing}		;# inform Tx coro that we're closing
+	} else {
+	    catch {$tx passthru}		;# inform Tx coro that we're closing
+	}
 
 	state_log {"" rx closed $socket $transaction}
     }
-
+    
     if {[info exists ondisconnect]} {
 	{*}$ondisconnect [info coroutine] [info locals]
     }

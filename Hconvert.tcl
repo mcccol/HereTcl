@@ -342,18 +342,17 @@ class create Convert {
 	return $path
     }
 
-    # Apply transformations to content
-    # yielding a desired content-type
+    # transformer - Apply transformations to content yielding a desired content-type
     method transformer {rq} {
 	set path [my tpath $rq]	;# find a transformation path
 
 	if {$path eq "*"} {
 	    Debug.convert {[self] transform identity}
-	    return [list identity $rq]
+	    return -errorcode IDENTITY $rq
 	} elseif {![llength $path]} {
 	    # no transformations possible
 	    Debug.convert {[self] no transformations possible}
-	    return [list none $rq]
+	    return -errorcode NONE $rq
 	}
 
 	# a transforming path exists
@@ -372,16 +371,14 @@ class create Convert {
 	    }
 
 	    try {
-		set result [{*}$transform($el) $rq]	;# transform content
-	    } ok ok {} {
+		set rq [{*}$transform($el) $rq]	;# transform content
+	    } trap SUSPEND {} {
+		# the transformer wants to suspend
+		# it signals this by setting a -suspend
+		Debug.convert {[self] transformer suspended}
+		return -errorcode SUSPEND $rq
+	    } on ok {} {
 		# transformation succeeded
-		set rq $result
-		if {[dict exists $rq -suspend]} {
-		    # the transformer wants to suspend
-		    # it signals this by setting a -suspend
-		    Debug.convert {[self] ransformer suspended}
-		    return [list suspended $rq]
-		}
 
 		# ensure the transformation is still on-path
 		set ctype [dict get $rq -reply content-type]
@@ -394,17 +391,13 @@ class create Convert {
 		} else {
 		    # restart the transformation with new content type
 		    Debug.convert {[self] '$transform($el)' transformer CHANGED target from '$oldtype' -> '$ctype' - we were expecting '$expected' while accepting:'[dict get? $rq accept]'}
-		    return [list changed $rq]
+		    return -errorcode CHANGED $rq
 		}
-	    } on error {e eo} {
-		# transformation failed - alert the caller
-		Debug.convert {[self] transformer ($transform($el)) Error $e ($eo)}
-		return [list error [H ServerError $rq $e $eo] $e $eo]
 	    }
 	}
 
 	Debug.convert {[self] transform accepting final: '[dict get? $rq accept]'}
-	return [list complete $rq]
+	return -errorcode COMPLETE $rq
     }
 
     # convert - perform all content negotiation on a response
@@ -418,8 +411,13 @@ class create Convert {
 	}
 
 	# raw responses get no conversion
-	if {[dict get? $rq -reply -raw] eq "1"} {
-	    return $rq	;# this is raw - no conversion
+	if {[dict exists $rq -reply raw]} {
+	    if {[dict get $rq -reply raw]} {
+		Debug.convert {[self] request is -raw, return}
+		return $rq	;# this is raw - no conversion
+	    }
+	} else {
+	    dict set rq -reply raw 0
 	}
 
 	# avoid identity conversions
@@ -460,56 +458,50 @@ class create Convert {
 
 	# perform each transformation on the path
 	# any step may set -raw to avoid further conversion
-	while {[dict get? $rq -reply -raw] ne "1"} {
+	while {![dict get $rq -reply raw]} {
 	    # transform according to mime type
 	    # determine the current best path from the current content-type
 	    # and one of the acceptable types.
 	    set oldct [dict get $rq -reply content-type]
 	    Debug.convert {[self] transforming from '$oldct' to one of these acceptable:'[dict get? $rq accept]'}
-	    lassign [my transformer $rq] state rsp e eo
-	    Debug.convert {[self] transformed from $oldct to '[dict get $rq -reply content-type]'}
-	    Debug.convert {[self] accepting1: '[dict get? $rq accept]'}
 
-	    switch -- $state {
-		complete -
-		none -
-		identity {
-		    # the transformation completed normally
-		    # the content is now in an acceptable form
-		    # or: no transformation is possible
+	    try {
+		set rq [my transformer $rq]
+	    } trap SUSPEND {} {
+		# the transformer wants to suspend
+		# it signals this by setting a -suspend
+		Debug.convert {[self] transformer suspended}
+		return -options $eo $r
+	    } trap CHANGED {} {
+		# the transformation path took us in an unexpected direction - keep going
+		Debug.convert {[self] conversion CHANGED to '[dict get? $rq -reply content-type]'}
+	    } on ok {} {
+		# the transformation completed normally with COMPLETE, NONE or IDENTITY
+		# the content is now in an acceptable form or no further transformation is possible
 
-		    # perform any postprocessing on *transformed* type
-		    # avoid doing this twice - if we've already preprocessed
-		    set ctype [dict get $rq -reply content-type]
-		    Debug.convert {[self] conversion [string toupper $state] to '$ctype'}
-		    if {$preprocessed ne $ctype
-			&& [info exists postprocess($ctype)]
-		    } {
-			set rsp [my postprocessor $rq]
-		    }
-
-		    break
+		# perform any postprocessing on *transformed* type
+		# avoid doing this twice - if we've already preprocessed
+		set ctype [dict get $rq -reply content-type]
+		Debug.convert {[self] conversion [string toupper $state] to '$ctype'}
+		if {$preprocessed ne $ctype && [info exists postprocess($ctype)]} {
+		    set rq [my postprocessor $rq]
 		}
+		break
+	    } on error {e eo} {
+		# a transformation error has occurred
+		# generate ServerError, proceed with *it* as content
+		Debug.convert {[self] conversion ERROR: '$e' ($eo)}
 
-		error {
-		    # a transformation error has occurred
-		    # we presume a ServerError has been generated
-		    # we will proceed with it as content
-		    Debug.convert {[self] conversion ERROR: '$e' ($eo)}
-		}
-
-		changed {
-		    # the transformation path took us in an unexpected direction
-		    Debug.convert {[self] conversion CHANGED to '[dict get? $rq -reply content-type]'}
-		}
-
-		suspended {
-		    # a transformer has suspended
-		    # the content will be returned later
-		    Debug.convert {[self] conversion SUSPENDED:}
-		    break
+		Debug.convert {[self] transformer ($transform($el)) Error $e ($eo)}
+		set rq [H ServerError $rq $e $eo]
+	    } finally {
+		if {![dict exists $rq -reply raw]} {
+		    dict set rq -reply raw 0	;# we're going to repeat this, so ensure we have a -reply raw setting
 		}
 	    }
+
+	    Debug.convert {[self] transformed from $oldct to '[dict get $rq -reply content-type]'}
+	    Debug.convert {[self] accepting1: '[dict get? $rq accept]'}
 	}
 
 	Debug.convert {[self] conversion complete: }
@@ -517,7 +509,7 @@ class create Convert {
 	return $rq
     }
 
-    # convert! - perform a specified transformation on a Wub response
+    # convert! - perform a specified transformation on a response
     method convert! {rq to {mime ""} {content ""}} {
 	if {$mime ne ""} {
 	    dict set rq -reply content-type $mime
@@ -525,6 +517,7 @@ class create Convert {
 	if {$content ne ""} {
 	    dict set rq -reply -content $content
 	}
+
 	if {[dict exists $rq accept]} {
 	    set oldaccept [dict get $rq accept]
 	}
@@ -532,6 +525,7 @@ class create Convert {
 	if {[info exists oldaccept]} {
 	    dict set rq accept $oldaccept
 	}
+
 	return $rq
     }
 

@@ -50,19 +50,23 @@ proc Pre {r pre} {
 	Debug.httpd {TRY pre '$P'}
 	try {
 	    uplevel 1 [list {*}$P $r]
-	} on return {r} {
-	    # the pre-process has decided to usurp processing
-	    Debug.httpd {pre '$P' - the pre-process has decided to usurp processing}
-	    corovar socket
-	    tailcall T::$socket reply $r
-	} on continue {} {
+	} trap CONTINUE {e eo} {
 	    Debug.httpd {pre '$P' - the pre-process has nothing to add}
 	    # the pre-process has nothing to add
-	} on break {r} {
+	} trap BREAK {r} {
 	    Debug.httpd {pre '$P' - the pre-process says skip the rest of the pre-processes}
 	    # the pre-process says skip the rest of the pre-processes,
 	    # continue with the process
 	    break
+	} trap RETURN {r eo} {
+	    # the pre-process has decided to usurp processing
+	    Debug.httpd {pre '$P' - the pre-process has decided to usurp processing}
+	    corovar socket
+	    tailcall T::$socket reply $r
+	} trap PASSTHRU {r eo} {
+	    # the process will handle its own response
+	    Debug.httpd {process will handle its own response}
+	    return -options $eo $r
 	} on error {e eo} {
 	    Debug.httpd {pre '$P' - the pre-process has failed '$e' ($eo)}
 	    # the pre-process failed - skip it
@@ -85,17 +89,21 @@ proc Post {r post} {
     foreach P $post {
 	try {
 	    uplevel 1 [list {*}$P $r]
-	} on break {e eo} {
+	} trap BREAK {e eo} {
 	    # the post-process says skip the rest of the post-processes,
 	    # it will handle its own response
 	    return -level 2 -options $eo $r
-	} on continue {} {
+	} trap CONTINUE {} {
 	    # the post-process has nothing to add
-	} on error {e eo} {
-	    # the pre-process failed - skip its contribution
-	} on return {r} {
+	} on RETURN {r} {
 	    # the post-process says skip the rest of the post-processes but return its result
 	    break
+	} trap PASSTHRU {r eo} {
+	    # the process will handle its own response
+	    Debug.httpd {process will handle its own response}
+	    return -options $eo $r
+	} on error {e eo} {
+	    # the pre-process failed - skip its contribution
 	} on ok {r} {
 	    # the preprocess returned a response, consume it
 	}
@@ -106,7 +114,8 @@ proc Post {r post} {
 
 variable pre {rxLint}
 variable post {}
-proc process {R} {
+
+proc pLambda {R} {
     set socket [dict get $R -socket]
     set transaction [dict get $R -transaction]
     set tx [dict get $R -tx]
@@ -114,54 +123,61 @@ proc process {R} {
     corovar process
     variable post
 
+    return [list ::apply [list {r socket pre process post tx} {
+	Debug.httpd {Starting process [info coroutine]}
+	set r [Pre $r $pre]		;# pre-process the request
+
+	# Process request: run the $process command
+	#	continue - process has nothing to add to pre-processing
+	#	break - the process will handle its own response transmission
+	#	error - the process has errored - make a ServerError response
+	#	ok - the process has returned its reply
+	set suspend 0
+	Debug.httpd {TRY process '$process'}
+	try {
+	    {*}$process $r
+	} trap CONTINUE {e eo} {
+	    # the process has nothing to say, post process
+	    Debug.httpd {process has nothing to say}
+	} trap PASSTHRU {e eo} {
+	    # the process will handle its own response
+	    Debug.httpd {process will handle its own response}
+	    return -options $eo $e
+	} trap SUSPEND {e eo} {
+	    # the process will handle its own response
+	    Debug.httpd {process will handle its own response}
+	    return
+	} on error {e eo} {
+	    # the process errored out - send an error message
+	    Debug.httpd {process has failed '$e' ($eo)}
+	    set r [ServerError $r $e $eo]
+	} on ok {result} {
+	    # the process returned a response, post-process then send it
+	    Debug.httpd {process returned ($result)}
+	    if {[dict size $result]} {
+		set r $result
+	    }
+	}
+
+	set r [Post $r $post]	;# post-process the request
+	if {[dict exists $r -suspend]} return	;# post-process can also suspend
+
+	#puts stderr "DONE PROCESS [info coroutine] $socket"
+	tailcall $tx reply $r		;# finally, transmit the response and close up
+    } [namespace current]] $R $socket $pre $process $post $tx]
+}
+
+# process - take R request dict through pre-process, process, and post-process phases
+proc process {R} {
+    set socket [dict get $R -socket]
+    set transaction [dict get $R -transaction]
+
     # Process the request+entity in a bespoke coroutine
     if {[llength [info commands process.$socket]]} {
 	Debug.httpd {Starting process process.socket}
 	process.$socket $R
     } else {
 	# default - do some Pre Process and Post action
-	coroutine process.$socket.$transaction ::apply [list {r socket pre process post tx} {
-	    Debug.httpd {Starting process [info coroutine]}
-	    set r [Pre $r $pre]		;# pre-process the request
-
-	    # Process request: run the $process command
-	    #	continue - process has nothing to add to pre-processing
-	    #	break - the process will handle its own response transmission
-	    #	error - the process has errored - make a ServerError response
-	    #	ok - the process has returned its reply
-	    set suspend 0
-	    Debug.httpd {TRY process '$process'}
-	    try {
-		{*}$process $r
-	    } on error {e eo} {
-		# the process errored out - send an error message
-		Debug.httpd {process has failed '$e' ($eo)}
-		set r [ServerError $r $e $eo]
-	    } on continue {} {
-		# the process has nothing to say, post process
-		Debug.httpd {process has nothing to say}
-	    } on break {e eo} {
-		# the process will handle its own response
-		Debug.httpd {process will handle its own response}
-		return -level 0 -options $eo $r
-	    } on ok {result} {
-		# the process returned a response, post-process then send it
-		Debug.httpd {process returned ($result)}
-		if {[dict size $result]} {
-		    set r $result
-		    if {[dict exists $result -rsp -suspend]} {
-			set suspend 1
-		    }
-		}
-	    }
-
-	    if {$suspend} return	;# processing has suspended
-
-	    set r [Post $r $post]	;# post-process the request
-	    if {[dict exists $r -suspend]} return	;# post-process can also suspend
-
-	    #puts stderr "DONE PROCESS [info coroutine] $socket"
-	    tailcall $tx reply $r		;# finally, transmit the response and close up
-	} [namespace current]] $R $socket $pre $process $post $tx
+	coroutine process.$socket.$transaction {*}[pLambda $R]
     }
 }

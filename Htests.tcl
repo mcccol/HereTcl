@@ -246,7 +246,7 @@ after 0 {::apply {{} {
 	    }
 	} -cleanup {
 	    chan close $::listener
-	} -result {TIMEOUT StartHeader}
+	} -result {TIMEOUT Request}
     }
 
     if {1} {
@@ -274,7 +274,7 @@ after 0 {::apply {{} {
 	    }
 	} -cleanup {
 	    chan close $::listener
-	} -result {TIMEOUT Header}
+	} -result {TIMEOUT Headers}
     }
 
     incr ::phase	;# these tests are complete
