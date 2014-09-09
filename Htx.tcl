@@ -279,7 +279,7 @@ proc TxHeaders {socket reply} {
     # send all HTTP fields which have relevance in response
     #set ll [open output.txt a]
     #fconfigure $ll -encoding binary -translation binary
-    dict for {n v} $reply {
+    foreach {n v} $reply {
 	# special case for cookies
 	if {$n eq "-set-cookies"} {
 	    foreach c $v {
@@ -364,7 +364,6 @@ proc TxFileName {name args} {
 # TxSend - process a single reply
 proc TxSend {} {
     corovar rq
-    corovar ns
     corovar socket
 
     Debug.httpdtxlow {TxSend $rq}
@@ -483,11 +482,11 @@ proc TxSend {} {
 		set gzheader [dict merge $gzheader [dict get? $reply -gzheader]]
 		set gzip [::zlib gzip [dict get $reply -content] -header $gzheader]
 		if {[string length $gzip] < [string length [dict get $reply -content]]} {
-		    # don't send gzipped if it is larger than original
 		    dict set reply -content $gzip	;# content becomes gzipped content
 		    dict set reply content-encoding gzip
 		    Debug.httpdtx {Format: zipping ($reply) - [string length [dict get $reply -content]] bytes}
 		} else {
+		    # don't send gzipped if it is larger than original
 		    dict unset reply content-encoding
 		    Debug.httpdtx {Format: Not zipping - pointless ($reply)}
 		}
@@ -609,7 +608,7 @@ proc Tx {args} {
 		&& ![dict size $pending]
 		&& [chan pending input $socket] == -1} break
 
-	    set rest [lassign [yieldm $sent] op]	;# fetch next command
+	    set rest [lassign [::yieldm $sent] op]	;# fetch next command
 	    Debug.httpdtx {[info coroutine] Tx yield $op ([lindex $rest 0])}
 	    switch -- $op {
 		continue {

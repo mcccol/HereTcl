@@ -364,6 +364,7 @@ namespace eval H {
 	if {[llength $args]%2} {
 	    set port [lindex $args end]
 	    set args [lrange $args 0 end-1]	;# port tagged on the end of args
+	    dict set args port $port
 	} elseif {[dict exists $args port]} {
 	    set port [dict get $args port]	;# passed in port
 	} else {
@@ -390,10 +391,10 @@ namespace eval H {
     namespace ensemble create -subcommands {}
 
     namespace eval R {
-	namespace import ::H::*
+	namespace import [namespace parent]::*
     }
     namespace eval T {
-	namespace import ::H::*
+	namespace import [namespace parent]::*
     }
 }
 

@@ -44,6 +44,9 @@ proc CharEncoding {r} {
 
     # client specified both ctype and charset - do we know that charset?
     set charset [string tolower $charset]
+    if {[string match "iso-*" $charset]} {
+	set charset [string map {iso- iso} $charset]
+    }
     if {$charset ni [encoding names]} {
 	# send NotAcceptable
 	corovar tx; tailcall $tx reply [dict merge $r {-code 406}]
@@ -64,7 +67,7 @@ proc HeaderCheck {r} {
     set version [dict get $r -Header version]
     if {$version < 1.1 && [dict exists $r connection]} {
 	foreach token [split [dict get $r connection] ","] {
-	    catch {dict unset r [string trim $token]}
+	    catch {dict unset r [string tolower [string trim $token]]}
 	}
 	dict unset r connection
     }
@@ -247,9 +250,6 @@ proc Header {r {one 0}} {
 	    Debug.httpdlow {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
 	    dict append r -Full [string range $line 0 end-1] \n	;# append all lines in header
 	    if {$one} {
-		if {![string match HTTP/* [lindex [split [dict get $r -Full] " "] end]]} {
-		    Bad $r "This isn't even HTTP"
-		}
 		dict set R -Header state $state
 		return $r	;# we only want the first line
 	    }
@@ -338,16 +338,56 @@ proc RxChunked {r} {
     if {$todisk == 0 || [chan tell size $epath] <= $todisk} {
 	# we don't want to have things on disk, or it's small enough to have in memory
 	# ??? How is entity encoded? - got to read it with encoding
-	dict set r -entity [chan read $entity]	;# grab the entity in its entirety
+	dict set r -reply -entity [chan read $entity]	;# grab the entity in its entirety
 	chan close $entity				;# close the entity fd
     } else {
 	# leave some hints for Query file processing
 	chan seek $entity 0			;# rewind entity to start
-	dict set r -entity_fd $entity	;# this entity is an open fd
+	dict set r -reply -entity_fd $entity	;# this entity is an open fd
     }
 
     # read+parse more header fields - apparently this is possible with Chunked ... who knew?
     tailcall dict merge $r [HeaderCheck [Parse [Header $r]]]
+}
+
+# RxEntityEOF - keep reading the entity until EOF
+proc RxEntityEOF {r} {
+    corovar socket	;# socket for pipeline
+    corovar todisk	;# size at which we leave entities on disk
+    corovar maxentity	;# maximum sized entity we will accept
+
+    set encoding [CharEncoding $r]	;# determine charset of content
+
+    # read entity into memory
+    Readable $socket [info coroutine]
+    Debug.entity {RxEntityEOF}
+
+    set entity ""
+    while {![chan eof $socket]} {
+	RxWait RxEntityEOF
+	append entity [chan read $socket]	;# read in as much as is available
+    }
+
+    Debug.entity {RxEntityEOF finished reading [string length $entity] [chan eof $socket]}
+
+    if {$encoding ne "binary"} {
+	dict set r -reply -entity [encoding convertfrom $encoding $entity]
+    } else {
+	dict set r -reply -entity $entity
+    }
+
+    # postprocess/decode the entity
+    corovar te
+    if {[info exists te]
+	&& [dict exists $r -reply -entity]
+	&& "gzip" in $te
+    } {
+	dict set r -reply -entity [::zlib inflate [dict get $r -reply -entity]]
+    }
+
+    dict set r -reply content-length 
+
+    return $r
 }
 
 # RxSizedEntity - given an entity size, read it in.
@@ -398,7 +438,7 @@ proc RxSizedEntity {r} {
 	    chan configure $entity -encoding $encoding	;# set encoding (if any)
 	}
 
-	dict set r -entity_fd $entity
+	dict set r -reply -entity_fd $entity
     } elseif {$left > 0} {
 	# read entity into memory
 	Readable $socket [info coroutine]
@@ -413,9 +453,9 @@ proc RxSizedEntity {r} {
 	Debug.entity {RxSizedEntity finished reading [string length $entity] [chan eof $socket]}
 
 	if {$encoding ne "binary"} {
-	    dict set r -entity [encoding convertfrom $encoding $entity]
+	    dict set r -reply -entity [encoding convertfrom $encoding $entity]
 	} else {
-	    dict set r -entity $entity
+	    dict set r -reply -entity $entity
 	}
 
 	if {[string length $entity] < $left} {
@@ -425,13 +465,13 @@ proc RxSizedEntity {r} {
 	# postprocess/decode the entity
 	corovar te
 	if {[info exists te]
-	    && [dict exists $r -entity]
+	    && [dict exists $r -reply -entity]
 	    && "gzip" in $te
 	} {
-	    dict set r -entity [::zlib inflate [dict get $r -entity]]
+	    dict set r -reply -entity [::zlib inflate [dict get $r -reply -entity]]
 	}
     } else {
-	dict set r -entity ""
+	dict set r -reply -entity ""
 	# the entity, length 0, is therefore already read
 	# 14.13: Any Content-Length greater than or equal to zero is a valid value.
     }
@@ -476,13 +516,36 @@ proc RxEntity {R} {
     } elseif {[dict exists $R content-length]} {
 	dict set R -Header state Sized
 	set R [RxSizedEntity $R]
-    } elseif {0} {
+    } elseif {[dict get $R -Header version] > 1.0} {
 	# this is a content-length driven entity transfer 411 Length Required
 	Bad $R "Length Required" 411
+    } else {
+	dict set R -Header state RxEntityEOF
+	set R [RxEntityEOF $R]
     }
     state_log {R rx entity [dict get $R -socket] [dict get $R -transaction]}
 
     dict set R -Header state Entity
+    return $R
+}
+
+# RxDead - called when Rx coroutine disappears
+proc RxDead {coro s tx args} {
+    #puts stderr "RxDEAD $coro '$s' [catch {set r [chan pending input $s]}]/$r [catch {set t [chan pending output $s]}]/$t [llength [chan names]]"
+}
+
+
+# RxHeaders - collect the headers
+proc RxHeaders {R} {
+    set R [Header $R]	;# collect all remaining headers
+
+    # indicate to tx that a request with this transaction id
+    # has been received and is (as yet) unsatisfied
+    [dict get $R -tx] pending [dict get $R -transaction]
+
+    set R [Parse $R]
+
+    state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
     return $R
 }
 
@@ -500,34 +563,19 @@ variable rx_defaults [defaults {
     opts {}
     timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxSizedEntity 20}
     ctype text/html
+    process process	;# default processing is to call process
+    rxprocess RxProcess	;# default rx processing is to call RxProcess
 }]
-
-# RxDead - called when Rx coroutine disappears
-proc RxDead {coro s tx args} {
-    #puts stderr "RxDEAD $coro '$s' [catch {set r [chan pending input $s]}]/$r [catch {set t [chan pending output $s]}]/$t [llength [chan names]]"
-}
-
-
-# RxHeaders - collect the headers
-proc RxHeaders {R} {
-    set R [Header $R]	;# collect all remaining headers
-
-    # indicate to tx that a request with this transaction id
-    # has been received and is (as yet) unsatisfied
-    [dict get $R -tx] pending [dict get $R -transaction]
-
-    set R [Parse $R]
-    set R [HeaderCheck $R]	;# parse $headers as a complete request header
-
-    state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
-    return $R
-}
 
 # RxProcess - default handling of packet reception
 # this can be overridden, and the application can take over processing
 proc RxProcess {R} {
     set R [Header $R 1]		;# fetch request/status line
+    if {![string match HTTP/* [lindex [split [dict get $R -Full] " "] end]]} {
+	Bad $r "This isn't even HTTP"
+    }
     set R [RxHeaders $R]	;# fetch all remaining headers
+    set R [HeaderCheck $R]	;# parse $headers as a complete request header
     set R [RxEntity $R]		;# fetch any entity
     return $R			;# return completed request
 }
@@ -566,9 +614,9 @@ proc Rx {args} {
 	    
 	    # receive and process packet
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
-	    set R [RxProcess $R]		;# receive the request
+	    set R [{*}$rxprocess $R]	;# receive the request
+	    {*}$process $R		;# Process the request+entity in a bespoke command
 
-	    process $R	;# Process the request+entity in a bespoke command
 	    state_log {R rx processed $socket $transaction}
 	}
     } trap HTTP {e eo} {
