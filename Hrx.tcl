@@ -127,8 +127,10 @@ proc ParseRQ {R line} {
 	# Status-Line = HTTP-Version SP Status-Code SP Reason-Phrase CRLF
 	dict set R -Header reason [join [lassign [split [dict get $R -Header full]] version status]]
 	dict set R -Header status $status
+	dict set R -Header type response
     } else {
 	# Request-Line = Method SP Request-URI SP HTTP-Version CRLF
+	dict set R -Header type request
 	foreach name {method uri version} value [split $line] {
 	    set $name $value
 	    dict set R -Header $name $value
@@ -650,8 +652,6 @@ proc Rx {args} {
     } on ok {r} {
 	# this happens on normal return
  
-	#$tx reply $r
-
 	if {[catch {chan eof $socket} eof] || $eof} {
 	    set reason "EOF on socket"
 	} elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {

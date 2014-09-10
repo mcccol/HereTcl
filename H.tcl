@@ -29,6 +29,7 @@ if {[catch {
     Debug define httpd
     Debug define listener
     Debug define httpdlow
+    Debug define httpdbad
     Debug define httpdtx
     Debug define httpdtxlow
     Debug define entity
@@ -236,6 +237,9 @@ namespace eval H {
 
     # construct an HTTP Bad response
     proc Bad {rq message {code 400}} {
+	puts stderr "BAD: $message $code ($rq)"
+
+	Debug.httpdbad {BAD: $message $code ($rq)}
 	if {[dict exists $rq -Header full]} {
 	    dict update rq -reply rsp {
 		if {![info exists rsp]} {

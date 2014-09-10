@@ -7,19 +7,6 @@ variable maxurilen 0	;# maximum length of URI
 
 proc rxLint {R} {
     Debug.httpdlow {rxLint $R}
-    set headers [split [dict get $R -Header full]]
-
-    # ensure the HTTP method is acceptable
-    set method [string toupper [lindex $headers 0]]
-    dict set R -Header method $method
-
-    # ensure the HTTP method is acceptable
-    variable methods
-    if {$method ni $methods} {
-	Debug.httpdlow {rxLint - unsupported method [info level] [info coroutine]}
-	#corovar socket; tailcall T::$socket reply [Bad $R "Method unsupported '$method'" 405]
-	tailcall Bad $R "Method unsupported '$method' (not one of $methods)" 405
-    }
 
     # ensure the HTTP version is acceptable
     if {[dict get $R -Header version] ni {1.1 1.0}} {
@@ -27,12 +14,25 @@ proc rxLint {R} {
 	tailcall Bad $R "HTTP Version '[dict get $R -Header version]' not supported" 505
     }
 
-    # ensure the URI is plausible
-    set uri [dict get $R -Header uri]
-    variable maxurilen
-    if {$maxurilen && [string length $uri] > $maxurilen} {
-	# send a 414 back
-	tailcall Bad $R "URI too long '$uri'" 414
+    if {[dict get $R -Header type] eq "request"} {
+	# ensure the HTTP method is acceptable if this is a request
+	set method [string toupper [dict get $R -Header method]]
+
+	# ensure the HTTP method is acceptable
+	variable methods
+	if {$method ni $methods} {
+	    Debug.httpdlow {rxLint - unsupported method [info level] [info coroutine]}
+	    #corovar socket; tailcall T::$socket reply [Bad $R "Method unsupported '$method'" 405]
+	    tailcall Bad $R "Method unsupported '$method' (not one of $methods)" 405
+	}
+
+	# ensure the URI is plausible
+	set uri [dict get $R -Header uri]
+	variable maxurilen
+	if {$maxurilen && [string length $uri] > $maxurilen} {
+	    # send a 414 back
+	    tailcall Bad $R "URI too long '$uri'" 414
+	}
     }
 
     return $R
@@ -68,7 +68,7 @@ proc Pre {r pre} {
 	    Debug.httpd {process will handle its own response}
 	    return -options $eo $r
 	} on error {e eo} {
-	    Debug.httpd {pre '$P' - the pre-process has failed '$e' ($eo)}
+	    Debug.httpd {pre the pre-process has failed in '$P' - '$e' ($eo)}
 	    # the pre-process failed - skip it
 	} on ok {r} {
 	    # the preprocess returned a response, consume it

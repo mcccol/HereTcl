@@ -1,7 +1,7 @@
 # Hclient - H's http client
-Debug on client
-Debug on httpd
-Debug on httpdlow
+Debug define client
+#Debug on httpd
+#Debug on httpdlow
 
 # CxSend - process a single reply
 proc CxSend {socket method url args} {
@@ -64,7 +64,9 @@ proc CxSend {socket method url args} {
 }
 
 proc CxGOT {r} {
-    puts stderr "GOT: $r"
+    set entity [dict get? $r -entity]
+    catch {dict unset r -entity}
+    puts stderr "GOT: ($r) with entity '[string range $entity 0 10]...[string range $entity end-10 end]'"
 }
 
 variable cx_defaults {
@@ -86,7 +88,7 @@ proc Cx {args} {
     try {
 	while {[chan pending output $socket] != -1} {
 	    set rest [lassign [::yieldm $sent] op]			;# wait for READ event
-	    puts stderr "CX [info coroutine] got op $op"
+	    Debug.client {CX [info coroutine] got op $op}
 
 	    switch -- $op {
 		connected {
@@ -134,7 +136,7 @@ proc Cx {args} {
 		
 		pending {
 		    # Rx has received the start of a command
-		    puts stderr "[info coroutine] Cx Pending $rest"
+		    Debug.client {[info coroutine] Cx Pending $rest}
 		}
 		
 		reply {
@@ -258,7 +260,7 @@ proc speak {args} {
 
     set args [dict merge $args [list port $port host $host socket $socket]]
     ::coroutine $Cx $namespace Cx {*}$args rx $Rx timer $timer	;# create Rx coro around H::Rx command
-    ::coroutine $Rx $namespace Rx rxprocess CxProcess process [list $Cx reply] {*}$args tx $Cx	;# create coro for client
+    ::coroutine $Rx $namespace Rx rxprocess CxProcess dispatch [list $Cx reply] {*}$args tx $Cx	;# create coro for client
 
     chan event $socket writable [list $Cx connected]	;# await connection
 
