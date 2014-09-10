@@ -18,7 +18,7 @@ proc rxLint {R} {
     if {$method ni $methods} {
 	Debug.httpdlow {rxLint - unsupported method [info level] [info coroutine]}
 	#corovar socket; tailcall T::$socket reply [Bad $R "Method unsupported '$method'" 405]
-	tailcall Bad $R "Method unsupported '$method'" 405
+	tailcall Bad $R "Method unsupported '$method' (not one of $methods)" 405
     }
 
     # ensure the HTTP version is acceptable

@@ -338,12 +338,12 @@ proc RxChunked {r} {
     if {$todisk == 0 || [chan tell size $epath] <= $todisk} {
 	# we don't want to have things on disk, or it's small enough to have in memory
 	# ??? How is entity encoded? - got to read it with encoding
-	dict set r -reply -entity [chan read $entity]	;# grab the entity in its entirety
+	dict set r -entity [chan read $entity]	;# grab the entity in its entirety
 	chan close $entity				;# close the entity fd
     } else {
 	# leave some hints for Query file processing
 	chan seek $entity 0			;# rewind entity to start
-	dict set r -reply -entity_fd $entity	;# this entity is an open fd
+	dict set r -entity_fd $entity	;# this entity is an open fd
     }
 
     # read+parse more header fields - apparently this is possible with Chunked ... who knew?
@@ -371,18 +371,18 @@ proc RxEntityEOF {r} {
     Debug.entity {RxEntityEOF finished reading [string length $entity] [chan eof $socket]}
 
     if {$encoding ne "binary"} {
-	dict set r -reply -entity [encoding convertfrom $encoding $entity]
+	dict set r -entity [encoding convertfrom $encoding $entity]
     } else {
-	dict set r -reply -entity $entity
+	dict set r -entity $entity
     }
 
     # postprocess/decode the entity
     corovar te
     if {[info exists te]
-	&& [dict exists $r -reply -entity]
+	&& [dict exists $r -entity]
 	&& "gzip" in $te
     } {
-	dict set r -reply -entity [::zlib inflate [dict get $r -reply -entity]]
+	dict set r -entity [::zlib inflate [dict get $r -entity]]
     }
 
     dict set r -reply content-length 
@@ -438,7 +438,7 @@ proc RxSizedEntity {r} {
 	    chan configure $entity -encoding $encoding	;# set encoding (if any)
 	}
 
-	dict set r -reply -entity_fd $entity
+	dict set r -entity_fd $entity
     } elseif {$left > 0} {
 	# read entity into memory
 	Readable $socket [info coroutine]
@@ -453,9 +453,9 @@ proc RxSizedEntity {r} {
 	Debug.entity {RxSizedEntity finished reading [string length $entity] [chan eof $socket]}
 
 	if {$encoding ne "binary"} {
-	    dict set r -reply -entity [encoding convertfrom $encoding $entity]
+	    dict set r -entity [encoding convertfrom $encoding $entity]
 	} else {
-	    dict set r -reply -entity $entity
+	    dict set r -entity $entity
 	}
 
 	if {[string length $entity] < $left} {
@@ -465,13 +465,13 @@ proc RxSizedEntity {r} {
 	# postprocess/decode the entity
 	corovar te
 	if {[info exists te]
-	    && [dict exists $r -reply -entity]
+	    && [dict exists $r -entity]
 	    && "gzip" in $te
 	} {
-	    dict set r -reply -entity [::zlib inflate [dict get $r -reply -entity]]
+	    dict set r -entity [::zlib inflate [dict get $r -entity]]
 	}
     } else {
-	dict set r -reply -entity ""
+	dict set r -entity ""
 	# the entity, length 0, is therefore already read
 	# 14.13: Any Content-Length greater than or equal to zero is a valid value.
     }
@@ -511,20 +511,20 @@ proc RxEntity {R} {
 	    dict set R -Header state Chunking
 	    set R [RxChunked $R]
 	} else {
-	    Bad $R "Length Required" 411
+	    Bad $R "Length Required HTTP [dict get $R -Header version] with transfer-encoding [dict exists $R transfer-encoding]" 411
 	}
     } elseif {[dict exists $R content-length]} {
 	dict set R -Header state Sized
 	set R [RxSizedEntity $R]
     } elseif {[dict get $R -Header version] > 1.0} {
 	# this is a content-length driven entity transfer 411 Length Required
-	Bad $R "Length Required" 411
+	#Bad $R "Length Required in HTTP [dict get $R -Header version]" 411
     } else {
 	dict set R -Header state RxEntityEOF
 	set R [RxEntityEOF $R]
     }
     state_log {R rx entity [dict get $R -socket] [dict get $R -transaction]}
-
+    Debug.entity {[info coroutine] RxEntity Done ($R)}
     dict set R -Header state Entity
     return $R
 }
@@ -554,7 +554,7 @@ variable rx_defaults [defaults {
     maxline 4096	;# maximum line length we'll accept
     maxline 4096	;# maximum header line length
     maxheaders 200	;# maximum number of headers we'll accept
-    maxurilen 0	;# maximum length of URI
+    maxurilen 0		;# maximum length of URI
     maxfield 0
     maxentity 0
     todisk 0
@@ -563,7 +563,7 @@ variable rx_defaults [defaults {
     opts {}
     timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxSizedEntity 20}
     ctype text/html
-    process process	;# default processing is to call process
+    dispatch process	;# default processing is to call process
     rxprocess RxProcess	;# default rx processing is to call RxProcess
 }]
 
@@ -572,7 +572,7 @@ variable rx_defaults [defaults {
 proc RxProcess {R} {
     set R [Header $R 1]		;# fetch request/status line
     if {![string match HTTP/* [lindex [split [dict get $R -Full] " "] end]]} {
-	Bad $r "This isn't even HTTP"
+	Bad $R "This isn't even HTTP"
     }
     set R [RxHeaders $R]	;# fetch all remaining headers
     set R [HeaderCheck $R]	;# parse $headers as a complete request header
@@ -614,8 +614,10 @@ proc Rx {args} {
 	    
 	    # receive and process packet
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
+	    Debug.httpd {[info coroutine] Rx process '$rxprocess' ($R)}
 	    set R [{*}$rxprocess $R]	;# receive the request
-	    {*}$process $R		;# Process the request+entity in a bespoke command
+	    Debug.httpd {[info coroutine] Process '$process' ($R)}
+	    {*}$dispatch $R		;# Process the request+entity in a bespoke command
 
 	    state_log {R rx processed $socket $transaction}
 	}
@@ -645,9 +647,11 @@ proc Rx {args} {
 	Debug.error {Rx $socket CONTINUE '$e' ($eo)}
     } on break {e eo} {
 	Debug.error {Rx $socket BREAK '$e' ($eo)}
-    } on ok {e eo} {
+    } on ok {r} {
 	# this happens on normal return
-	
+ 
+	#$tx reply $r
+
 	if {[catch {chan eof $socket} eof] || $eof} {
 	    set reason "EOF on socket"
 	} elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {

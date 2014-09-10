@@ -11,6 +11,7 @@ Debug off httpd
 Debug off httpdlow
 Debug off httpdtx
 Debug off httpdtxlow
+Debug off process
 Debug off entity
 Debug define cache
 Debug define cookies
@@ -199,7 +200,7 @@ after 0 {::apply {{} {
 
     test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
 	set ::listener [H listen process [list ::apply {{r} {
-	    set entity [dict get $r -entity]; dict unset r -entity
+	    set entity [dict get? $r -entity]; dict unset r -entity
 	    #puts Rx:[binary encode hex $entity]
 	    dict set r -reply -content $entity
 	    dict set r -reply content-length [string length $entity]

@@ -700,6 +700,7 @@ proc Tx {args} {
 		    # queue a response for sending - this is called by Rx or its progeny
 		    set r [lindex $rest 0]		;# reply dict
 		    state_log {r tx $op $socket $trx $sent [llength $pending]}
+		    Debug.httpdtx {[info coroutine] Tx received reply ($r)}
 		    set trx [dict get $r -transaction]	;# reply dict's transaction count should match earlier pending
 		    if {$trx <= $sent} {
 			# this reply is a duplicate of an already-sent packet
