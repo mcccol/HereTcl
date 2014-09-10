@@ -13,6 +13,7 @@
 
 package provide sgraph 1.0
 
+# sgraph - a little grap package upon which Hconvert depends
 namespace eval sgraph {
     proc lpop _L {
 	upvar 1 $_L L
