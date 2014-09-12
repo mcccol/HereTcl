@@ -1,4 +1,5 @@
 # Hrx.tcl - light Httpd 1.1 rx component
+#
 
 # Tmpfile - create a temporary file with appropriate encodings
 proc Tmpfile {R} {
@@ -57,7 +58,7 @@ proc CharEncoding {r} {
 
 # HeaderCheck - given a request dict $r, perform semantic checks and adjustments
 proc HeaderCheck {r} {
-    Debug.httpdlow {HeaderCheck $r}
+    Debug.httpdlow {[info coroutine] HeaderCheck $r}
     # rfc2616 14.10:
     # A system receiving an HTTP/1.0 (or lower-version) message that
     # includes a Connection header MUST, for each connection-token
@@ -98,7 +99,7 @@ proc HeaderCheck {r} {
 	    dict set r -Url [dict merge [dict get $r -Url] [path $uri]]
 	}
     } elseif {$version > 1.0} {
-	Debug.httpdlow {Host field required: $r}
+	Debug.httpdlow {[info coroutine] Host field required: $r}
 	Bad $r "HTTP 1.1 required to send Host"
     } else {
 	# HTTP 1.0 isn't required to send a Host field
@@ -116,7 +117,7 @@ proc HeaderCheck {r} {
     }
 
     dict set r -Header state HeaderCheck
-    Debug.httpdlow {HeaderCheck done: $r}
+    Debug.httpdlow {[info coroutine] HeaderCheck done: $r}
     return $r
 }
 
@@ -146,7 +147,7 @@ proc ParseRQ {R line} {
 proc Parse {R} {
     set lines [regsub -all {\n[\t ]+} [dict get $R -Full] " "]	;# merge continuation lines
     dict unset R -Full
-    Debug.httpdlow {Parse: $lines}
+    Debug.httpdlow {[info coroutine] Parse: $lines}
 
     set clientheaders {}
 
@@ -204,7 +205,7 @@ proc RxWait {where} {
     }
 
     if {$exception ne ""} {
-	Debug.httpd {Exception '$exception' from '$from' in $where}
+	Debug.httpd {[info coroutine] Exception '$exception' from '$from' while waiting for '$where'}
 	return -code error -errorcode [list $exception $from] "$exception from $from"
     } else {
 	return 0
@@ -217,6 +218,8 @@ proc Header {r {one 0}} {
     corovar maxline	;# maximum header line length
     set socket [dict get $r -socket]
     chan configure $socket -blocking 0
+
+    Debug.httpd {[info coroutine] Header $one}
 
     if {$one} {
 	set state Request
@@ -242,17 +245,18 @@ proc Header {r {one 0}} {
 		if {[incr count] > 4} {
 		    Bad $r "Too Much Blank"
 		}
+		Debug.httpdlow {[info coroutine] got blank pre-header}
 	    } else {
 		# this terminates headers
 		Debug.httpdlow {[info coroutine] got [llength [split [dict get $r -Full] \n]] lines of header}
-		dict set R -Header state $state
+		dict set r -Header state $state
 		return $r
 	    }
 	} else {
 	    Debug.httpdlow {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
 	    dict append r -Full [string range $line 0 end-1] \n	;# append all lines in header
 	    if {$one} {
-		dict set R -Header state $state
+		dict set r -Header state $state
 		return $r	;# we only want the first line
 	    }
 	}
@@ -273,15 +277,15 @@ proc ChunkSize {socket} {
     return $chunksize
 }
 
-# RxChunked - perform chunked entity reception
-proc RxChunked {r} {
+# RxEntityChunked - perform chunked entity reception
+proc RxEntityChunked {r} {
     corovar socket		;# connection to client
     corovar todisk		;# the size at which we elect to leave entities on disk
     corovar maxentity	;# maximum sized entity we will accept
 
     # get size of next chunk
     set chunksize [ChunkSize $socket]	;# how many bytes to read?
-    Debug.entity {RxChunked $chunksize}
+    Debug.entity {[info coroutine] RxEntityChunked $chunksize}
     if {$chunksize <= 0} {
 	# no more bytes to read
 	corovar entity_to_read; set entity_to_read 0	;# the entity has been read
@@ -303,7 +307,7 @@ proc RxChunked {r} {
 	# prepare the socket for copy
 	Readable $socket [info coroutine]
 	while {![chan eof $socket] && ![error $socket]} {
-	    RxWait RxChunked
+	    RxWait RxEntityChunked
 
 	    set buf [chan read $socket $chunksize]
 	    chan puts -nonewline $entity $buf
@@ -323,7 +327,7 @@ proc RxChunked {r} {
 
     Readable $socket [info coroutine]	;# restart reader loop
 
-    Debug.entity {got chunked entity in $entity}
+    Debug.entity {[info coroutine] got chunked entity in $entity}
 
     # at this point we have a complete entity in $entity file, it's already been ungzipped
     # we need to process it somehow.
@@ -362,7 +366,7 @@ proc RxEntityEOF {r} {
 
     # read entity into memory
     Readable $socket [info coroutine]
-    Debug.entity {RxEntityEOF}
+    Debug.entity {[info coroutine] RxEntityEOF}
 
     set entity ""
     while {![chan eof $socket]} {
@@ -370,7 +374,7 @@ proc RxEntityEOF {r} {
 	append entity [chan read $socket]	;# read in as much as is available
     }
 
-    Debug.entity {RxEntityEOF finished reading [string length $entity] [chan eof $socket]}
+    Debug.entity {[info coroutine] RxEntityEOF finished reading [string length $entity] [chan eof $socket]}
 
     if {$encoding ne "binary"} {
 	dict set r -entity [encoding convertfrom $encoding $entity]
@@ -392,8 +396,8 @@ proc RxEntityEOF {r} {
     return $r
 }
 
-# RxSizedEntity - given an entity size, read it in.
-proc RxSizedEntity {r} {
+# RxEntitySized - given an entity size, read it in.
+proc RxEntitySized {r} {
     corovar socket	;# socket for pipeline
     corovar todisk	;# size at which we leave entities on disk
     corovar maxentity	;# maximum sized entity we will accept
@@ -401,7 +405,7 @@ proc RxSizedEntity {r} {
     # simple 'entity follows header' with explicit length
     set left [dict get $r content-length]
 
-    Debug.entity {RxSizedEntity of length $left}
+    Debug.entity {[info coroutine] RxEntitySized of length $left}
 
     # enforce server limits on Entity length
     if {$maxentity > 0 && $left > $maxentity} {
@@ -418,7 +422,7 @@ proc RxSizedEntity {r} {
 	# create a temp file to contain entity
 	set entity [Tmpfile $r]
 	chan configure $entity -encoding binary
-	Debug.entity {RxSizedEntity of length $left > $todisk ==> write to $entity}
+	Debug.entity {[info coroutine] RxEntitySized of length $left > $todisk ==> write to $entity}
 
 	Readable $socket [info coroutine]
 
@@ -444,15 +448,15 @@ proc RxSizedEntity {r} {
     } elseif {$left > 0} {
 	# read entity into memory
 	Readable $socket [info coroutine]
-	Debug.entity {RxSizedEntity of length $left < $todisk ==> write to memory}
+	Debug.entity {[info coroutine] RxEntitySized of length $left < $todisk ==> write to memory}
 
 	set entity ""
 	while {[string length $entity] < $left && ![chan eof $socket]} {
-	    RxWait RxSizedEntity
+	    RxWait RxEntitySized
 	    append entity [chan read $socket [expr {$left - [string length $entity]}]]	;# read in as much as is available
 	}
 
-	Debug.entity {RxSizedEntity finished reading [string length $entity] [chan eof $socket]}
+	Debug.entity {[info coroutine] RxEntitySized finished reading [string length $entity] [chan eof $socket]}
 
 	if {$encoding ne "binary"} {
 	    dict set r -entity [encoding convertfrom $encoding $entity]
@@ -510,19 +514,19 @@ proc RxEntity {R} {
 	}
 
 	if {[dict exists $te chunked]} {
-	    dict set R -Header state Chunking
-	    set R [RxChunked $R]
+	    dict set R -Header state {RxEntity Chunking}
+	    set R [RxEntityChunked $R]
 	} else {
 	    Bad $R "Length Required HTTP [dict get $R -Header version] with transfer-encoding [dict exists $R transfer-encoding]" 411
 	}
     } elseif {[dict exists $R content-length]} {
-	dict set R -Header state Sized
-	set R [RxSizedEntity $R]
+	dict set R -Header state {RxEntity Sized}
+	set R [RxEntitySized $R]
     } elseif {[dict get $R -Header version] > 1.0} {
 	# this is a content-length driven entity transfer 411 Length Required
 	#Bad $R "Length Required in HTTP [dict get $R -Header version]" 411
     } else {
-	dict set R -Header state RxEntityEOF
+	dict set R -Header state {RxEntity EOF}
 	set R [RxEntityEOF $R]
     }
     state_log {R rx entity [dict get $R -socket] [dict get $R -transaction]}
@@ -563,23 +567,60 @@ variable rx_defaults [defaults {
     def_charset [encoding system]
     entitypath ""	;# path on which Tmpfile creates entity files
     opts {}
-    timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxSizedEntity 20}
+    timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxEntitySized 20}
     ctype text/html
     dispatch process	;# default processing is to call process
     rxprocess RxProcess	;# default rx processing is to call RxProcess
 }]
 
-# RxProcess - default handling of packet reception
+# RxProcess - default handling of packet reception - state machine
 # this can be overridden, and the application can take over processing
-proc RxProcess {R} {
-    set R [Header $R 1]		;# fetch request/status line
-    if {![string match HTTP/* [lindex [split [dict get $R -Full] " "] end]]} {
-	Bad $R "This isn't even HTTP"
+proc RxProcess {R {server 1}} {
+    while {[set state [dict get $R -Header state]] ne "Entity"} {
+	set state [lindex $state 0]
+
+	Debug.httpd {[info coroutine] RxProcess '$state' ($R)}
+
+	switch -- $state {
+	    Initial {
+		# nothing has been read
+		set R [Header $R 1]		;# fetch request/status line
+	    }
+
+	    Request {
+		# have read first line of header
+		if {$server && ![string match HTTP/* [lindex [split [string trim [dict get $R -Full]] " "] end]]} {
+		    Bad $R "This isn't even HTTP '[string trim [dict get $R -Full]]'"
+		}
+		set R [RxHeaders $R]	;# fetch all remaining headers
+	    }
+	    
+	    Headers {
+		# have read all headers
+		set R [Parse $R]	;# parse $headers as a complete request header
+	    }
+
+	    Parsed {
+		# headers parsed
+		set R [HeaderCheck $R]	;# parse $headers as a complete request header
+	    }
+	    
+	    HeaderCheck {
+		# headers checked and conditioned
+		set R [RxEntity $R]
+	    }
+	    
+	    Entity {
+		# completely read entity
+		break
+	    }
+
+	    default {
+		error "Invalid Header state '$state'"
+	    }
+	}
     }
-    set R [RxHeaders $R]	;# fetch all remaining headers
-    set R [HeaderCheck $R]	;# parse $headers as a complete request header
-    set R [RxEntity $R]		;# fetch any entity
-    return $R			;# return completed request
+    return $R
 }
 
 # Rx - coroutine to process pipeline reception
@@ -593,7 +634,7 @@ proc Rx {args} {
 	{*}$onconnect [info coroutine] [info locals]
     }
 
-    Debug.listener {start Rx [info coroutine] $args}
+    Debug.listener {[info coroutine] start Rx $args}
 
     # This can be used as a debugging aid to track coro state
     #trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
@@ -625,14 +666,14 @@ proc Rx {args} {
 	}
     } trap HTTP {e eo} {
 	state_log {R rx http $socket $transaction}
-	Debug.httpd {Httpd $e}
+	Debug.httpd {[info coroutine] Httpd $e}
     } trap TIMEOUT {e eo} {
 	if {[dict get $eo -errorcode] eq ""} {
 	    state_log {R rx inactive $socket $transaction}
-	    Debug.httpd {Inactive $e}
+	    Debug.httpd {[info coroutine] Inactive $e}
 	} else {
 	    state_log {R rx timeout $socket $transaction}
-	    Debug.httpd {Httpd $e}
+	    Debug.httpd {[info coroutine] Httpd $e}
 	}
     } trap PASSTHRU {e eo} {
 	# the process has handed off our socket to another process
@@ -641,14 +682,14 @@ proc Rx {args} {
 	puts stderr "[info coroutine] PASSTHRU"
     } on error {e eo} {
 	state_log {R rx error $socket $transaction}
-	Debug.error {Rx $socket ERROR '$e' ($eo)}
+	Debug.error {[info coroutine] Rx $socket ERROR '$e' ($eo)}
     } on return {e eo} {
 	# this happens if something tailcalls out of the coro (?)
 	#Debug.error {Rx $socket RETURN '$e' ($eo)}
     } on continue {e eo} {
-	Debug.error {Rx $socket CONTINUE '$e' ($eo)}
+	Debug.error {[info coroutine] Rx $socket CONTINUE '$e' ($eo)}
     } on break {e eo} {
-	Debug.error {Rx $socket BREAK '$e' ($eo)}
+	Debug.error {[info coroutine] Rx $socket BREAK '$e' ($eo)}
     } on ok {r} {
 	# this happens on normal return
  
@@ -663,13 +704,13 @@ proc Rx {args} {
 	}
 	
 	state_log {R rx closed $socket $transaction $reason}
-	Debug.httpd {Normal termination: $reason}
+	Debug.httpd {[info coroutine] Normal termination: $reason}
     } finally {
 	if {[info exists timer]} {
 	    catch {::after cancel $timer}; unset timer
 	}
 	
-	Debug.listener {Rx [info coroutine] DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1 || headers [llength $headers]}
+	Debug.listener {[info coroutine] Rx DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1 || headers [llength $headers]}
 	
 	if {!$passthru} {
 	    catch {Readable $socket}	;# turn off the chan event readable

@@ -237,7 +237,7 @@ namespace eval H {
 
     # construct an HTTP Bad response
     proc Bad {rq message {code 400}} {
-	puts stderr "BAD: $message $code ($rq)"
+	#puts stderr "BAD: $message $code ($rq)"
 
 	Debug.httpdbad {BAD: $message $code ($rq)}
 	if {[dict exists $rq -Header full]} {

@@ -217,6 +217,9 @@ oo::class create Direct {
 
 	Debug.direct {[self] do $r}
 
+	if {[dict get $r -Header state] ne "Entity"} {
+	}
+
 	variable methods
 	set cmd [dict get $r -Url cmd]
 	if {![dict exists $methods $cmd] eq {}} {
