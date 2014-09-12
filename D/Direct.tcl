@@ -61,6 +61,13 @@ oo::class create Direct {
 	    }
 	}
 
+	variable passthru
+	foreach m [lreverse [lsort -dictionary [info object methods [self] -private -all]]] {
+	    if {[string match |* $m]} {
+		lappend passthru $m
+	    }
+	}
+
 	Debug.direct {[lindex [self] 0] of class $class methods: ($methods) / ([info class methods $class -private -all]) - ([info object methods [self] -all -private])}
 
 	variable wildcard
@@ -212,7 +219,46 @@ oo::class create Direct {
 	return $r
     }
 
+    # copydone - end of passthru
+    method copydone {coro socket sdir fsd fdir args} {
+	Debug.direct {$socket PASSTHRU DONE: $sdir $args}
+	catch {chan close $socket $sdir}
+	catch {chan close $fsd $fdir}
+    }
+
+    # start passthru
+    method passthru {r dsock {url ""}} {
+	if {$url eq ""} {
+	    lassign [split [dict get $r -Full]] method uri version
+	    set url /[join [lrange [split $uri /] 2 end] /]
+	}
+
+	chan configure $dsock -encoding binary -buffering none -blocking 0 -translation binary
+	lassign [split [dict get $r -Full]] method . version
+	Debug.direct {[info coroutine] PASSTHRU URI: $url}
+	puts -nonewline $dsock "$method $url $version\xd\xa"
+
+	set socket [dict get $r -socket]
+	chan configure $socket -encoding binary -buffering none -blocking 0 -translation binary
+	chan event $socket readable {}
+	chan event $socket writable {}
+
+	chan copy $dsock $socket -command [list [self] copydone [info coroutine] $socket write $dsock read]
+	chan copy $socket $dsock -command [list [self] copydone [info coroutine] $socket read $dsock write]
+
+	return -code error -errorcode PASSTHRU
+    }
+
     method do {r} {
+	# try for passthru first
+	set r [H Header $r 1]
+	set cmd |[lindex [split [lindex [split [dict get $r -Full]] 1] /] 1]
+	variable passthru
+	if {$cmd in $passthru} {
+	    Debug.direct {[info coroutine] PASSTHRU DO: $cmd}
+	    my passthru $r {*}[my $cmd $r]
+	}
+
 	if {[dict get $r -Header state] ne "Entity"} {
 	    set r [H RxProcess $r]	;# finish processing if necessary
 	}
@@ -271,6 +317,7 @@ oo::class create Direct {
 	variable complain 0	;# complain if a named parameter doesn't exist?
 	variable parameters 1	;# bother unpacking parameters?
 	variable {*}$args
+	variable passthru {}	;# experimental - list of passthru URLs
 
 	[self] mkMethods
     }
