@@ -58,11 +58,15 @@ namespace eval H {
     variable home [file dirname [file normalize [info script]]]
 
     proc BGERROR {lower e eo} {
-	set rest [lassign [dict get $eo -errorcode] errcode subcode]
-	switch -- $errcode {
-	    default {
-		puts stderr "BGERROR: '$e' ($eo)"
+	if {[dict exists $eo -errorcode]} {
+	    set rest [lassign [dict get $eo -errorcode] errcode subcode]
+	    switch -- $errcode {
+		default {
+		    puts stderr "BGERROR: '$e' ($eo)"
+		}
 	    }
+	} else {
+	    puts stderr "BGERROR: '$e' ($eo)"
 	}
     }
 
@@ -116,7 +120,7 @@ interp bgerror {} [list H BGERROR [interp bgerror {}]]
 package provide H 8.0
 
 # load minimal H components
-H::load Hrx.tcl Htx.tcl Hproc.tcl
+H::load Hrx.tcl Htx.tcl Hproc.tcl Herr.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {

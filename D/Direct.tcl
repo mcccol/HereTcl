@@ -213,13 +213,13 @@ oo::class create Direct {
     }
 
     method do {r} {
-	set r [my Url $r]	;# expand out the -Url element a bit
-
-	Debug.direct {[self] do $r}
-
 	if {[dict get $r -Header state] ne "Entity"} {
 	    set r [H RxProcess $r]	;# finish processing if necessary
 	}
+
+	set r [my Url $r]	;# expand out the -Url element a bit
+
+	Debug.direct {[self] do $r}
 
 	variable methods
 	set cmd [dict get $r -Url cmd]

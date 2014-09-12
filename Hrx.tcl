@@ -576,10 +576,10 @@ variable rx_defaults [defaults {
 # RxProcess - default handling of packet reception - state machine
 # this can be overridden, and the application can take over processing
 proc RxProcess {R {server 1}} {
-    while {[set state [dict get $R -Header state]] ne "Entity"} {
-	set state [lindex $state 0]
+    while {1} {
+	set state [lindex [dict get $R -Header state] 0]
 
-	Debug.httpd {[info coroutine] RxProcess '$state' ($R)}
+	Debug.httpd {[info coroutine] RxProcess in state '$state' ($R)}
 
 	switch -- $state {
 	    Initial {
@@ -657,12 +657,26 @@ proc Rx {args} {
 	    
 	    # receive and process packet
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
-	    Debug.httpd {[info coroutine] Rx process '$rxprocess' ($R)}
+	    Debug.httpd {[info coroutine] Rx Process: '$rxprocess' ($R)}
 	    set R [{*}$rxprocess $R]	;# receive the request
-	    Debug.httpd {[info coroutine] Process '$process' ($R)}
-	    {*}$dispatch $R		;# Process the request+entity in a bespoke command
 
-	    state_log {R rx processed $socket $transaction}
+	    try {
+		Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
+		set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
+	    } trap SUSPEND {} {
+		# keep processing more input - this dispatcher has suspended
+		Debug.httpd {[info coroutine] Dispatch: SUSPEND}
+	    } trap PASSTHRU {e eo} {
+		Debug.httpd {[info coroutine] Dispatch: PASSTHRU}
+		return -options $eo $e
+	    } on error {e eo} {
+		Debug.error {[info coroutine] Error '$e' ($eo)}
+		set R [ServerError $e $eo]
+		$tx reply $R		;# transmit the error
+	    } on ok {} {
+		Debug.httpd {[info coroutine] Dispatch: OK}
+		$tx reply $R		;# finally, transmit the response
+	    }
 	}
     } trap HTTP {e eo} {
 	state_log {R rx http $socket $transaction}
@@ -675,11 +689,11 @@ proc Rx {args} {
 	    state_log {R rx timeout $socket $transaction}
 	    Debug.httpd {[info coroutine] Httpd $e}
 	}
-    } trap PASSTHRU {e eo} {
+    } trap PASSTHRU {} {
 	# the process has handed off our socket to another process
 	# we have nothing to do but wait
 	set passthru 1
-	puts stderr "[info coroutine] PASSTHRU"
+	Debug.httpd {[info coroutine] PASSTHRU}
     } on error {e eo} {
 	state_log {R rx error $socket $transaction}
 	Debug.error {[info coroutine] Rx $socket ERROR '$e' ($eo)}
