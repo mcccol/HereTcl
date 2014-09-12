@@ -15,6 +15,7 @@ set ::tcl::unsupported::noReverseDNS 1	;# turn off reverse DNS
 # event logging hook - default a Noop
 proc ::Noop {args} {}
 interp alias {} ::H::state_log {} ::Noop
+proc ::Identity {x} {return $x}
 
 # try to load the Debug module, for nice formatted debug narrative
 if {[catch {

@@ -218,7 +218,7 @@ oo::class create Direct {
 	Debug.direct {[self] do $r}
 
 	if {[dict get $r -Header state] ne "Entity"} {
-	    set r [RxProcess $r]	;# finish processing if necessary
+	    set r [H RxProcess $r]	;# finish processing if necessary
 	}
 
 	variable methods
