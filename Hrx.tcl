@@ -262,8 +262,14 @@ proc Header {r {one 0}} {
 	}
     }
 
-    Debug.httpd {[info coroutine] got EOF after headers:'$r' $eof}
-    Bad $r "No end of Headers"
+    if {$one} {
+	Debug.httpd {[info coroutine] got EOF waiting for request:'$r' $eof}
+	dict set r -Header state EOF
+	return -code error -errorcode EOF
+    } else {
+	Debug.httpd {[info coroutine] got EOF after headers:'$r' $eof}
+	Bad $r "No end of Headers"
+    }
 }
 
 # ChunkSize - return the next chunk size
@@ -615,6 +621,11 @@ proc RxProcess {R {server 1}} {
 		break
 	    }
 
+	    EOF {
+		# we got an EOF waiting for request
+		break
+	    }
+
 	    default {
 		error "Invalid Header state '$state'"
 	    }
@@ -657,12 +668,17 @@ proc Rx {args} {
 	    
 	    # receive and process packet
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
+
 	    Debug.httpd {[info coroutine] Rx Process: '$rxprocess' ($R)}
 	    set R [{*}$rxprocess $R]	;# receive the request
 
 	    try {
 		Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
 		set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
+	    } trap EOF {e eo} {
+		return -options $eo $e
+	    } trap TIMEOUT {e eo} {
+		return -options $eo $e
 	    } trap SUSPEND {} {
 		# keep processing more input - this dispatcher has suspended
 		Debug.httpd {[info coroutine] Dispatch: SUSPEND}
@@ -681,6 +697,8 @@ proc Rx {args} {
     } trap HTTP {e eo} {
 	state_log {R rx http $socket $transaction}
 	Debug.httpd {[info coroutine] Httpd $e}
+    } trap EOF {e eo} {
+	Debug.httpd {[info coroutine] EOF waiting for request}
     } trap TIMEOUT {e eo} {
 	if {[dict get $eo -errorcode] eq ""} {
 	    state_log {R rx inactive $socket $transaction}
