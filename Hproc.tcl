@@ -134,13 +134,13 @@ proc process {R} {
 	    set r [Pre $r $pre]		;# pre-process the request
 
 	    # Process request: run the $process command
-	    #	continue - process has nothing to add to pre-processing
-	    #	break - the process will handle its own response transmission
+	    #	CONTINUE - process has nothing to add to pre-processing
+	    #	SUSPEND - the process will handle its own response transmission
+	    #	PASSTHRU - the process will handle its network comms
 	    #	error - the process has errored - make a ServerError response
 	    #	ok - the process has returned its reply
-	    set suspend 0
-	    Debug.httpd {TRY process '$process'}
 	    try {
+		Debug.httpd {TRY process '$process'}
 		{*}$process $r
 	    } trap CONTINUE {e eo} {
 		# the process has nothing to say, post process
@@ -154,7 +154,7 @@ proc process {R} {
 		Debug.httpd {process will handle its own response}
 		return
 	    } on error {e eo} {
-		# the process errored out - send an error message
+		# the process errored out - generate an error
 		Debug.httpd {process has failed '$e' ($eo)}
 		set r [ServerError $r $e $eo]
 	    } on ok {result} {

@@ -375,7 +375,6 @@ class create Convert {
 		set rq [{*}$transform($el) $rq]	;# transform content
 	    } trap SUSPEND {} {
 		# the transformer wants to suspend
-		# it signals this by setting a -suspend
 		Debug.convert {[self] transformer suspended}
 		return -errorcode SUSPEND $rq
 	    } on ok {} {
@@ -470,7 +469,6 @@ class create Convert {
 		set rq [my transformer $rq]
 	    } trap SUSPEND {} {
 		# the transformer wants to suspend
-		# it signals this by setting a -suspend
 		Debug.convert {[self] transformer suspended}
 		return -options $eo $r
 	    } trap CHANGED {} {
