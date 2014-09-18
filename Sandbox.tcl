@@ -35,6 +35,7 @@ variable toplevel {<html>
     <body>
     <h1>H Sandbox - play around</h1>
     <p>Here is the complete <a href='/home'>file system</a> in which this instance of H is running, right now [clock format [clock seconds]]<p>
+    <p><a href='/home/Sandbox.tcl'>This file</a> is the code running this program, right now.<p>
     <p>Here are the fossil repositories containing this instance.</p>
     <ul>$fossil</ul>
     </body>
