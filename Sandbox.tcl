@@ -33,11 +33,18 @@ variable toplevel {<html>
     <head>
     </head>
     <body>
-    <h1>H Sandbox - play around</h1>
+    <h1>H Sandbox - play around</h1> by Colin McCormack mcccol@gmail.com
     <p>Here is the complete <a href='/home'>file system</a> in which this instance of H is running, right now [clock format [clock seconds]]<p>
     <p><a href='/home/Sandbox.tcl'>This file</a> is the code running this program, right now.<p>
     <p>Here are the fossil repositories containing this instance.</p>
     <ul>$fossil</ul>
+
+    <h2>Get it, mod it, play around some more.</h2>
+    <ol>
+    <li>Download <a href='/home/H.fossil'>the repo</a></li>
+    <li>execute: fossil open H.fossil
+    <li>execute: tclsh8.6 Sandbox.tcl
+    </ol>
     </body>
     </html>
 }
