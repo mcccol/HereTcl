@@ -228,6 +228,7 @@ oo::class create Direct {
 
     # start passthru
     method passthru {r dsock {url ""}} {
+	#puts stderr "passthru '$url'"
 	if {$url eq ""} {
 	    lassign [split [dict get $r -Full]] method uri version
 	    set url /[join [lrange [split $uri /] 2 end] /]
@@ -256,7 +257,7 @@ oo::class create Direct {
 	variable passthru
 	if {$cmd in $passthru} {
 	    Debug.direct {[info coroutine] PASSTHRU DO: $cmd}
-	    my passthru $r {*}[my $cmd $r]
+	    my passthru {*}[my $cmd $r]
 	}
 
 	if {[dict get $r -Header state] ne "Entity"} {
