@@ -252,8 +252,13 @@ oo::class create Direct {
 
     method do {r} {
 	# try for passthru first
-	set r [H Header $r 1]
-	set cmd |[lindex [split [lindex [split [dict get $r -Full]] 1] /] 1]
+	if {[dict get $r -Header state] eq "Initial"} {
+	    set r [H Header $r 1]
+	    set full [dict get $r -Full]
+	} else {
+	    set full [dict get $r -Header full]
+	}
+	set cmd |[lindex [split [lindex [split $full] 1] /] 1]
 	variable passthru
 	if {$cmd in $passthru} {
 	    Debug.direct {[info coroutine] PASSTHRU DO: $cmd}

@@ -184,7 +184,9 @@ proc RxWait {where} {
     }
 
     corovar timeout
-    if {[dict exists $timeout $where]} {
+    if {![info exists timeout]} {
+	set time -1
+    } elseif {[dict exists $timeout $where]} {
 	set time [dict get $timeout $where]
     } elseif {[dict exists $timeout ""]} {
 	set time [dict get $timeout ""]
@@ -652,6 +654,7 @@ proc Rx {args} {
 
     set passthru 0
     set headers {}
+    set timeout {}
     set transaction 0	;# unique count of packets received by this receiver
     set R {}
     try {
