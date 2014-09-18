@@ -41,8 +41,9 @@ variable toplevel {<html>
 
     <h2>Get it, mod it, play around some more.</h2>
     <ol>
-    <li>Download <a href='/home/H.fossil'>the repo</a> into a nice clean directory</li>
-    <li>In that nice clean directory, execute: fossil open H.fossil
+    <li>Make a nice clean directory</li>
+    <li>In that directory, execute: fossil clone http://[info hostname]:$::port/h/H/ H.fossil
+    <li>Execute: fossil open H.fossil
     <li>Then execute: tclsh8.6 Sandbox.tcl
     </ol>
     </body>
