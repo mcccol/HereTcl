@@ -1,7 +1,7 @@
 package require TclOO
 
 package require Debug
-Debug on file
+Debug define file
 
 Debug define caching
 

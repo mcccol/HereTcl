@@ -90,7 +90,7 @@ namespace eval H {
     proc load {args} {
 	variable home
 	set dir $home
-	puts stderr "load from $dir ($args)"
+	#puts stderr "load from $dir ($args)"
 	foreach a $args {
 	    if {[string match #* $a]} continue
 	    if {[file pathtype $a] eq "relative"} {
