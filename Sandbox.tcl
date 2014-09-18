@@ -41,9 +41,9 @@ variable toplevel {<html>
 
     <h2>Get it, mod it, play around some more.</h2>
     <ol>
-    <li>Download <a href='/home/H.fossil'>the repo</a></li>
-    <li>execute: fossil open H.fossil
-    <li>execute: tclsh8.6 Sandbox.tcl
+    <li>Download <a href='/home/H.fossil'>the repo</a> into a nice clean directory</li>
+    <li>In that nice clean directory, execute: fossil open H.fossil
+    <li>Then execute: tclsh8.6 Sandbox.tcl
     </ol>
     </body>
     </html>
