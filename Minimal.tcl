@@ -7,7 +7,7 @@ package require Direct
 set port 8080
 variable {*}$argv
 
-File create root root [file join [file dirname [file normalize [info script]]]]
+File create root root [file dirname [file normalize [info script]]]
 
 Direct create dispatcher {
     method /root {r} {
