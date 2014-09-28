@@ -30,6 +30,10 @@ proc Readable {socket args} {
 # CharEncoding - determine the charset of any content
 proc CharEncoding {r} {
     # decode the content-type ... FIXME - I bet there's more decoding to be done
+    if {![dict exists $r content-type]} {
+	return binary	;# there's no content type specified, assume binary
+    }
+
     set charset [join [lassign [split [dict get $r content-type] \;] ctype] \;]
 
     if {[string match "*charset=*" $charset]} {
