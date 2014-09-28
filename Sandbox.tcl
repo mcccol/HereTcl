@@ -38,6 +38,9 @@ variable toplevel {<html>
     <p><a href='/home/Sandbox.tcl'>This file</a> is the code running this program, right now.  It has some necessary complexities.<p>
     <p><a href='/home/Minimal.tcl'>This file</a> is a much more minimal example of an H-served site.</p>
 
+    <p><a href='h/moop'>This link</a> shows you the default error you get if there's something wrong.</p>
+    <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
+
     <p>Here are the fossil repositories containing this instance.</p>
     <ul>$fossil</ul>
 
