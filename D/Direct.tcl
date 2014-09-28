@@ -247,22 +247,33 @@ oo::class create Direct {
 	chan copy $dsock $socket -command [list [self] copydone [info coroutine] $socket write $dsock read]
 	chan copy $socket $dsock -command [list [self] copydone [info coroutine] $socket read $dsock write]
 
-	return -code error -errorcode PASSTHRU
+	return -code error -errorcode PASSTHRU	;# abort the caller command, initiate PASSTHRU mode
     }
 
     method do {r} {
 	# try for passthru first
 	if {[dict get $r -Header state] eq "Initial"} {
 	    set r [H Header $r 1]
-	    set full [dict get $r -Full]
+	    set full [dict get $r -Full]	;# the request hasn't been fully parsed
 	} else {
-	    set full [dict get $r -Header full]
+	    set full [dict get $r -Header full]	;# fully parsed request
 	}
-	set cmd |[lindex [split [lindex [split $full] 1] /] 1]
+
+	# handle passthru command, if this is one
 	variable passthru
-	if {$cmd in $passthru} {
+	if {[set cmd |[lindex [split [lindex [split $full] 1] /] 1]] in $passthru} {
 	    Debug.direct {[info coroutine] PASSTHRU DO: $cmd}
-	    my passthru {*}[my $cmd $r]
+	    try {
+		set cmd [my $cmd $r]	;# |commands return [list $r $passthru_socket]
+	    } on error {e eo} {
+		# to report an error we have to fully parse the request
+		if {[dict get $r -Header state] ne "Entity"} {
+		    set r [H RxProcess $r]	;# finish processing if necessary
+		}
+		return [H ServerError $r $e $eo]	;# signal server error
+	    } on ok {} {
+		my passthru {*}$cmd
+	    }
 	}
 
 	if {[dict get $r -Header state] ne "Entity"} {

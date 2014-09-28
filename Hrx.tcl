@@ -690,7 +690,7 @@ proc Rx {args} {
 		return -options $eo $e
 	    } on error {e eo} {
 		Debug.error {[info coroutine] Error '$e' ($eo)}
-		set R [ServerError $e $eo]
+		set R [ServerError $R $e $eo]
 		$tx reply $R		;# transmit the error
 	    } on ok {} {
 		Debug.httpd {[info coroutine] Dispatch: OK}
