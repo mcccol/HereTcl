@@ -332,18 +332,20 @@ puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
 # the tests need to be in event space
 after 0 {::apply {{} {
     puts stderr Phase:$::phase
+    #Debug on httpd
+    #Debug on httpdtx
 
     set ::listener [H listen timeout {} process [list ::apply {{r} {
 	# this server snippet pauses randomly, then returns the uri trailing element as an entity
 	#puts stderr "SETTING[info coroutine]/[llength [chan names]] ($r)"
 	after [expr {int(10000 * rand())}] [info coroutine]
-	::yieldto return -code break	;# this bit of magic causes Hproc to leave this processing coro alone
+	::yieldto return -code error -errorcode SUSPEND	;# this bit of magic causes Hproc to leave this processing coro alone
 	
 	set socket [dict get $r -socket]
 	set val [string trim [dict get $r -Header uri] /]
 	set result [H Ok $r content-type text/plain $val]
 	#puts stderr "TRIGGER[info coroutine]: $val - $socket -> $result"
-	return $result
+	[dict get $r -tx] reply $result		;# transmit the error
     }}] $::port]
 
     variable port

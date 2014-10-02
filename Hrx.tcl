@@ -193,15 +193,20 @@ proc RxWait {where} {
     }
 
     corovar timeout
+
     if {![info exists timeout]} {
 	set time -1
-    } elseif {[dict exists $timeout $where]} {
-	set time [dict get $timeout $where]
-    } elseif {[dict exists $timeout ""]} {
-	set time [dict get $timeout ""]
     } else {
-	set time -1
+	Debug.httpdlow {timeout == '$timeout' in $where}
+	if {[dict exists $timeout $where]} {
+	    set time [dict get $timeout $where]
+	} elseif {[dict exists $timeout ""]} {
+	    set time [dict get $timeout ""]
+	} else {
+	    set time -1
+	}
     }
+
     if {$time > 0} {
 	corovar timer
 	set timer [::after [expr {$time*1000}] [info coroutine] TIMEOUT $where]
@@ -584,7 +589,7 @@ variable rx_defaults [defaults {
     def_charset [encoding system]
     entitypath ""	;# path on which Tmpfile creates entity files
     opts {}
-    timeout {"" 20 Header 20 ChunkSize 20 Chunked 20 RxEntitySized 20}
+    timeout {"" 20 Request 20 Header 20 ChunkSize 20 Chunked 20 RxEntitySized 20}
     ctype text/html
     dispatch process	;# default processing is to call process
     rxprocess RxProcess	;# default rx processing is to call RxProcess
@@ -677,7 +682,7 @@ proc Rx {args} {
 
     set passthru 0
     set headers {}
-    set timeout {}
+    #set timeout {}
     set transaction 0	;# unique count of packets received by this receiver
     set R {}
     try {
