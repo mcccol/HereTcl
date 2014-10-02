@@ -727,6 +727,12 @@ proc Tx {args} {
 		    append close "Rx dying"		;# Tx should close too
 		}
 
+		websocket {
+		    # Rx indicates it's processing websocket
+		    set passthru 1
+		    append close "Rx websocket"		;# Tx should close too
+		}
+
 		passthru {
 		    # Rx indicates it's closing due to passthrough
 		    state_log {"" tx $op $socket $trx $sent [llength $pending]}

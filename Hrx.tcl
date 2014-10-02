@@ -61,68 +61,73 @@ proc CharEncoding {r} {
 }
 
 # HeaderCheck - given a request dict $r, perform semantic checks and adjustments
-proc HeaderCheck {r} {
-    Debug.httpdlow {[info coroutine] HeaderCheck $r}
+proc HeaderCheck {R} {
+    Debug.httpdlow {[info coroutine] HeaderCheck $R}
     # rfc2616 14.10:
     # A system receiving an HTTP/1.0 (or lower-version) message that
     # includes a Connection header MUST, for each connection-token
     # in this field, remove and ignore any header field(s) from the
     # message with the same name as the connection-token.
     #### I have no idea what this is for
-    set version [dict get $r -Header version]
-    if {$version < 1.1 && [dict exists $r connection]} {
-	foreach token [split [dict get $r connection] ","] {
-	    catch {dict unset r [string tolower [string trim $token]]}
+    set version [dict get $R -Header version]
+    if {$version < 1.1 && [dict exists $R connection]} {
+	foreach token [split [dict get $R connection] ","] {
+	    catch {dict unset R [string tolower [string trim $token]]}
 	}
-	dict unset r connection
+	dict unset R connection
     }
 
-    set headers [split [dict get $r -Header full]]
+    set headers [split [dict get $R -Header full]]
     set uri [join [lrange $headers 1 end-1]]
-    dict set r -Header uri $uri
+    dict set R -Header uri $uri
 
     # fill -Url
-    if {[dict exists $r host]} {
+    if {[dict exists $R host]} {
 	# client sent Host: field
 	if {[string match http*:* $uri]} {
 	    # absolute Host: field
 	    # rfc 5.2 1 - a host header field must be ignored
 	    # if request-line specified an absolute URL host/port
-	    dict set r -Url [dict merge [dict get $r -Url] [parse_url $uri]]
+	    dict set R -Url [dict merge [dict get $R -Url] [parse_url $uri]]
 	} else {
 	    # no absolute URL was specified on the request-line
 	    # use the Host field to determine the host
-	    lassign [split [dict get $r host] :] h p
-	    dict set r -Url host $h
+	    lassign [split [dict get $R host] :] h p
+	    dict set R -Url host $h
 	    if {$p eq ""} {
 		corovar port
-		dict set r -Url port $port
+		dict set R -Url port $port
 	    } else {
-		dict set r -Url port $p
+		dict set R -Url port $p
 	    }
-	    dict set r -Url [dict merge [dict get $r -Url] [path $uri]]
+	    dict set R -Url [dict merge [dict get $R -Url] [path $uri]]
 	}
     } elseif {$version > 1.0} {
-	Debug.httpdlow {[info coroutine] Host field required: $r}
-	Bad $r "HTTP 1.1 required to send Host"
+	Debug.httpdlow {[info coroutine] Host field required: $R}
+	Bad $R "HTTP 1.1 required to send Host"
     } else {
 	# HTTP 1.0 isn't required to send a Host field
 	# but we still need host info as provided by Listener
-	dict set r -Url [dict merge [dict get $r -Url] [path $uri]]
-	dict set r -Url host [host [dict get $r -Url]]
+	dict set R -Url [dict merge [dict get $R -Url] [path $uri]]
+	dict set R -Url host [host [dict get $R -Url]]
     }
 
     if {0} {
 	#### could be done where it's used, if it's used
 	# remove 'netscape extension' length= from if-modified-since
-	if {[dict exists $r if-modified-since]} {
-	    dict set r if-modified-since [lindex [split [dict get $r if-modified-since] {;}] 0]
+	if {[dict exists $R if-modified-since]} {
+	    dict set R if-modified-since [lindex [split [dict get $R if-modified-since] {;}] 0]
 	}
     }
 
-    dict set r -Header state HeaderCheck
-    Debug.httpdlow {[info coroutine] HeaderCheck done: $r}
-    return $r
+    if {[dict exists $R connection] && [string tolower [dict get $R connection]] eq "upgrade"} {
+	dict set R -Header state Upgrade
+    } else {
+	dict set R -Header state HeaderCheck
+    }
+
+    Debug.httpdlow {[info coroutine] HeaderCheck done: $R}
+    return $R
 }
 
 # ParseRQ - unpack request/status line into its fields
@@ -616,7 +621,20 @@ proc RxProcess {R {server 1}} {
 		# headers parsed
 		set R [HeaderCheck $R]	;# parse $headers as a complete request header
 	    }
-	    
+
+	    Upgrade {
+		# the header contains a 'Connection: Upgrade' field
+		switch -- [string tolower [dict get $R upgrade]] {
+		    websocket {
+			# websocket handshake
+			return -code error -errorcode PASSTHRU $R	;# abort the caller command, initiate WEBSOCKET mode
+		    }
+		    default {
+			Bad $R "Unknown Upgrade '[dict get $R upgrade]'"
+		    }
+		}
+	    }
+
 	    HeaderCheck {
 		# headers checked and conditioned
 		set R [RxEntity $R]
@@ -637,6 +655,7 @@ proc RxProcess {R {server 1}} {
 	    }
 	}
     }
+
     return $R
 }
 
@@ -689,6 +708,8 @@ proc Rx {args} {
 	    } trap SUSPEND {} {
 		# keep processing more input - this dispatcher has suspended
 		Debug.httpd {[info coroutine] Dispatch: SUSPEND}
+	    } trap WEBSOCKET {r eo} {
+		tailcall WebSocket connect $r
 	    } trap PASSTHRU {e eo} {
 		Debug.httpd {[info coroutine] Dispatch: PASSTHRU}
 		return -options $eo $e
@@ -714,6 +735,8 @@ proc Rx {args} {
 	    state_log {R rx timeout $socket $transaction}
 	    Debug.httpd {[info coroutine] Httpd $e}
 	}
+    } trap WEBSOCKET {r eo} {
+	tailcall websocket $r
     } trap PASSTHRU {} {
 	# the process has handed off our socket to another process
 	# we have nothing to do but wait

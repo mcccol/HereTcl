@@ -6,68 +6,6 @@
 # (which are commands of the form .mime/type.mime/type)
 #
 
-# sgraph
-# simple graph code, sufficient to give minimal acyclic paths between nodes
-# Thanks Richard Suchenwi for:
-#	http://wiki.tcl.tk/2473 and http://wiki.tcl.tk/2603
-
-package provide sgraph 1.0
-
-# sgraph - a little grap package upon which Hconvert depends
-namespace eval sgraph {
-    proc lpop _L {
-	upvar 1 $_L L
-	set L [lassign $L res]
-	set res
-    }
-
-    proc neighbors {g node} {
-	if {[dict exists $g $node]} {
-	    return [dict get $g $node]
-	} else {
-	    return {}
-	}
-    }
-
-    proc path {g from to} {
-	if {$from eq $to} {
-	    return {}
-	} elseif {[string match $to $from]} {
-	    return {}
-	}
-
-	set length 999999	;# simulated infinity
-	set todo $from		;# list of things to try
-	while {[llength $todo]} {
-	    set try [lpop todo]	;# first thing to do
-	    set last [lindex $try end]
-	    #puts stderr "sgraph path: ($try) ($last)"
-	    foreach node [neighbors $g $last] {
-		if {($node eq $to)
-		    || [string match $to $node]
-		} {
-		    if {[llength $try] < $length} {
-			set length [llength $try]
-		    }
-		    lappend try $node
-		    return $try    ;# found a path
-		} elseif {[lsearch $try $node] >= 0} {
-		    continue ;# detected a cycle
-		} elseif {[llength $try] < $length} {
-		    lappend todo [concat $try [list $node]]
-		} else {
-		} ;# lappend and lpop make a FIFO queue
-	    }
-	}
-
-	return {}
-    }
-
-    namespace export -clear *
-    namespace ensemble create -subcommands {}
-}
-
-package require sgraph
 package require OO
 
 package provide Convert 1.0
@@ -203,6 +141,43 @@ class create Convert {
 	return $rsp
     }
 
+    # Path
+    # from sgraph - simple graph code, sufficient to give minimal acyclic paths between nodes
+    # Thanks Richard Suchenwi for: http://wiki.tcl.tk/2473 and http://wiki.tcl.tk/2603
+    method Path {g from to} {
+	if {$from eq $to} {
+	    return {}
+	} elseif {[string match $to $from]} {
+	    return {}
+	}
+
+	set length 999999	;# simulated infinity
+	set todo $from		;# list of things to try
+	while {[llength $todo]} {
+	    set todo [lassign $todo try]	;# first thing to do
+	    set last [lindex $try end]
+	    #puts stderr "sgraph path: ($try) ($last)"
+	    foreach node [dict get? $g $last] {
+		if {($node eq $to)
+		    || [string match $to $node]
+		} {
+		    if {[llength $try] < $length} {
+			set length [llength $try]
+		    }
+		    lappend try $node
+		    return $try    ;# found a path
+		} elseif {[lsearch $try $node] >= 0} {
+		    continue ;# detected a cycle
+		} elseif {[llength $try] < $length} {
+		    lappend todo [concat $try [list $node]]
+		} else {
+		} ;# lappend and [lassign] make a FIFO queue
+	    }
+	}
+
+	return {}
+    }
+
     # path - return a path through the transformation graph
     # between source 'from' and sink 'to'
     method path {from to} {
@@ -232,7 +207,7 @@ class create Convert {
 	    if {$possible eq ""} continue
 	    lassign [split $possible ,] from to
 	    Debug.convert {[self] ESSAY accept:$accept possible:$possible from:'$from' to:'$to'}
-	    set path [sgraph path $graph $from $to]
+	    set path [my Path $graph $from $to]
 	    if {[llength $path]} {
 		Debug.convert {[self] SUCCESS path $from -> $to via $path}
 		break
@@ -260,10 +235,9 @@ class create Convert {
 	}
     }
 
-    # Find a match for an acceptable type,
+    # tpath - find a match for an acceptable type,
     # or calculate a path through the transformation graph
     # which will generate an acceptable type
-
     method tpath {rq} {
 	set ctype [string tolower [dict get $rq -reply content-type]]	;# what we have
 	set accept [string tolower [dict get $rq accept]]	;# what we want

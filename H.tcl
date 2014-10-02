@@ -152,6 +152,29 @@ namespace eval H {
 	return [clock format $seconds -format {%a, %d %b %Y %T GMT} -gmt true]
     }
 
+    # Values - handle multiple instances of a field
+    proc Values {R key {delim ""}} {
+	if {[dict exists $R -Header multiple $key]} {
+	    set values [dict get $R $key]
+	} else {
+	    set values [list [dict get $R $key]]
+	}
+
+	if {$delim eq ""} {
+	    return $values	;# return undelimited fields
+	}
+
+	# return delimited fields
+	set result {}
+	foreach val $values {
+	    foreach el [split $val $delim] {
+		lappend result [string trim $el]
+	    }
+	}
+
+	return $result
+    }
+
     # rxCORS - respond to CORS request with 
     proc rxCORS {r} { 
 	if {[dict get $r -Header method] eq "OPTIONS"
@@ -241,7 +264,7 @@ namespace eval H {
     }
 
     # construct an HTTP Bad response
-    proc Bad {rq message {code 400}} {
+    proc Bad {rq message {code 400} args} {
 	#puts stderr "BAD: $message $code ($rq)"
 
 	Debug.httpdbad {BAD: $message $code ($rq)}
@@ -253,6 +276,7 @@ namespace eval H {
 
 		dict set rsp -content <p>[H armour $message]</p>
 		dict set rsp -code $code
+		set rsp [dict merge $rsp $args]
 		set rsp [NoCache $rsp]
 	    }
 	    [dict get $rq -tx] reply $rq
