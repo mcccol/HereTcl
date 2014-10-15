@@ -161,6 +161,7 @@ set largs {}
 lappend largs rxprocess ::Identity	;# H will not pre-process requests (permits passthru)
 lappend largs dispatch {dispatcher do}	;# H will dispatch requests to $dispatch for processing
 lappend largs tls {} 
+#lappend largs tls [list -require 0 -certfile server.crt -keyfile server.key -cadir $home]	;# for TLS - certs in $home
 set ::listener [H listen {*}$largs $::port]
 puts stderr "H listening on port $::port"
 
