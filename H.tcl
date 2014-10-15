@@ -325,24 +325,6 @@ namespace eval H {
 	    Debug.listener {Pipeline $opts $socket $ipaddr $rport}
 	    state_log {"" pipeline connect $socket $ipaddr $rport}
 
-	    # look for tls opts
-	    if {[dict exists $opts tls] && [dict size [dict get $opts tls]]} {
-		# do something with TLS
-		package require tls
-		set tls [dict merge {
-		    -certfile server-public.pem
-		    -keyfile server-private.pem
-		    -cadir .
-		    -cafile ca.pem
-		    -ssl2 0
-		    -ssl3 1
-		    -tls1 1
-		    -require 0
-		    -request 1} [dict get $opts tls]]
-		tls::import $socket {*}$tls		;# graft the TLS connection on socket
-		tls::handshake $socket		;# start the TLS handshake
-	    }
-
 	    # set up socket encoding and translation - it should never change
 	    chan configure $socket -encoding binary -translation {binary binary} ;#-blocking 0
 
@@ -406,17 +388,35 @@ namespace eval H {
 	}
 	dict set args listening $port	;# remember which port we're listening on
 
+	# look for tls opts
+	if {[dict exists $args tls] && [dict size [dict get $args tls]]} {
+	    # do something with TLS
+	    package require tls
+	    set tls [dict merge {
+		-certfile server-public.pem
+		-keyfile server-private.pem
+		-cadir .
+		-cafile ca.pem
+		-require 0
+		-request 0
+	    } [dict get $args tls]]
+	    set socket_cmd ::tls::socket
+	} else {
+	    set socket_cmd ::socket
+	    set tls {}
+	}
+
 	# start the listener
 	Debug.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}
 	try {
-	    set socket [::socket -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
+	    set socket [$socket_cmd -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] {*}$tls $port]
 	} trap {POSIX EADDRINUSE} {e eo} {
 	    puts stderr "LISTENER ERROR: [dict filter $args key -*] port $port is already in use"
 	    exit
 	} on error {e eo} {
 	    puts stderr "LISTENER ERROR: '$e' ($eo)"
 	} finally {
-	    return $socket
+	    return $socket	;# return the socket, permitting more intervention
 	}
     }
 
