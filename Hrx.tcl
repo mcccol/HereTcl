@@ -677,8 +677,8 @@ proc Rx {args} {
 
     Debug.listener {[info coroutine] start Rx $args}
     if {[dict exists $args tls] && [dict size [dict get $args tls]]} {
-	Debug.listener {[info coroutine] tls::status [tls::status -local $socket]}
-	Debug.listener {[info coroutine] tls::handshake [tls::handshake $socket]}
+	tls::handshake $socket	;# generate an error if the handshake failed - it'll be picked up below
+	Debug.listener {[info coroutine] tls::status [tls::status $socket]}
     }
     # This can be used as a debugging aid to track coro state
     #trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
