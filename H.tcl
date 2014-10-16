@@ -399,6 +399,7 @@ namespace eval H {
 		-cafile ca.pem
 		-require 0
 		-request 0
+		-ssl3 0
 	    } [dict get $args tls]]
 	    set socket_cmd ::tls::socket
 	} else {
