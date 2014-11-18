@@ -7,8 +7,11 @@
 #
 
 package require OO
+package require Debug
+Debug define convert
 
 package provide HConvert 1.0
+
 
 if {[info exists argv0] && ($argv0 eq [info script])} {
     lappend auto_path [pwd]
@@ -254,7 +257,7 @@ class create Convert {
 	# search the acceptable for a match to what we have
 	# otherwise, sort the acceptable by q parameter
 	set order 10000; # dummy quality measure to preserve order
-	foreach a [split [dict get $q accept] ,] {
+	foreach a [split [dict get $rq accept] ,] {
 	    # client will accept type $a with quality $q
 	    lassign [split [string trim $a] ";"] a q
 
@@ -376,6 +379,7 @@ class create Convert {
 
     # convert - perform all content negotiation on a response
     method convert {rq {to ""}} {
+	Debug.convert {Convert $rq to: $to}
 	if {![dict exists $rq -reply -content]} {
 	    Debug.convert {[self] request has no content, return}
 	    return $rq
@@ -455,7 +459,7 @@ class create Convert {
 		# perform any postprocessing on *transformed* type
 		# avoid doing this twice - if we've already preprocessed
 		set ctype [dict get $rq -reply content-type]
-		Debug.convert {[self] conversion [string toupper $state] to '$ctype'}
+		Debug.convert {[self] conversion to '$ctype'}
 		if {$preprocessed ne $ctype && [info exists postprocess($ctype)]} {
 		    set rq [my postprocessor $rq]
 		}
@@ -519,7 +523,7 @@ class create Convert {
 	variable tcache	;# cache of known transformations
 
 	# allow .ini file to modify defaults
-	variable {*}[Site var? Convert]
+	#variable {*}[Site var? Convert]
 	variable {*}$args
 
 	variable conversions

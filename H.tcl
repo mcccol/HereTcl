@@ -286,6 +286,16 @@ namespace eval H {
 	return -code error -errorcode [list HTTP $code] $message
     }
 
+    proc Reply {rq args} {
+	if {[llength $args]%2} {
+	    set content [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	    dict set args -content $content
+	}
+	dict set rq -reply [dict merge [dict get? $rq -reply] $args]
+	return $rq
+    }
+
     # Ok - construct an HTTP Ok response
     proc Ok {rq args} {
 	if {[llength $args]%2} {

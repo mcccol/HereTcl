@@ -4,9 +4,10 @@
 
 variable methods {GET PUT POST HEAD OPTIONS}
 variable maxurilen 0	;# maximum length of URI
+Debug define process
 
 proc rxLint {R} {
-    Debug.httpdlow {rxLint $R}
+    Debug.process {rxLint $R}
 
     # ensure the HTTP version is acceptable
     if {[dict get $R -Header version] ni {1.1 1.0}} {
@@ -21,7 +22,7 @@ proc rxLint {R} {
 	# ensure the HTTP method is acceptable
 	variable methods
 	if {$method ni $methods} {
-	    Debug.httpdlow {rxLint - unsupported method [info level] [info coroutine]}
+	    Debug.process {rxLint - unsupported method [info level] [info coroutine]}
 	    #corovar socket; tailcall T::$socket reply [Bad $R "Method unsupported '$method'" 405]
 	    tailcall Bad $R "Method unsupported '$method' (not one of $methods)" 405
 	}
@@ -47,32 +48,32 @@ proc rxLint {R} {
 #	ok - the preprocess has modified the request
 proc Pre {r pre} {
     foreach P $pre {
-	Debug.httpd {TRY pre '$P'}
+	Debug.process {TRY pre '$P'}
 	try {
 	    uplevel 1 [list {*}$P $r]
 	} trap CONTINUE {e eo} {
-	    Debug.httpd {pre '$P' - the pre-process has nothing to add}
+	    Debug.process {pre '$P' - the pre-process has nothing to add}
 	    # the pre-process has nothing to add
 	} trap BREAK {r} {
-	    Debug.httpd {pre '$P' - the pre-process says skip the rest of the pre-processes}
+	    Debug.process {pre '$P' - the pre-process says skip the rest of the pre-processes}
 	    # the pre-process says skip the rest of the pre-processes,
 	    # continue with the process
 	    break
 	} trap RETURN {r eo} {
 	    # the pre-process has decided to usurp processing
-	    Debug.httpd {pre '$P' - the pre-process has decided to usurp processing}
+	    Debug.process {pre '$P' - the pre-process has decided to usurp processing}
 	    corovar socket
 	    tailcall T::$socket reply $r
 	} trap PASSTHRU {r eo} {
 	    # the process will handle its own response
-	    Debug.httpd {process will handle its own response}
+	    Debug.process {process will handle its own response}
 	    return -options $eo $r
 	} on error {e eo} {
-	    Debug.httpd {pre the pre-process has failed in '$P' - '$e' ($eo)}
+	    Debug.process {pre the pre-process has failed in '$P' - '$e' ($eo)}
 	    # the pre-process failed - skip it
 	} on ok {r} {
 	    # the preprocess returned a response, consume it
-	    Debug.httpd {pre '$P' - the pre-process has returned a response ($r)}
+	    Debug.process {pre '$P' - the pre-process has returned a response ($r)}
 	}
     }
     return $r
@@ -87,6 +88,7 @@ proc Pre {r pre} {
 #	ok - the post-process has modified the request, consume it and continue post-processing
 proc Post {r post} {
     foreach P $post {
+	Debug.process {Post '$P'}
 	try {
 	    uplevel 1 [list {*}$P $r]
 	} trap BREAK {e eo} {
@@ -95,17 +97,21 @@ proc Post {r post} {
 	    return -level 2 -options $eo $r
 	} trap CONTINUE {} {
 	    # the post-process has nothing to add
-	} on RETURN {r} {
+	    Debug.process {Post '$P' has nothing to add}
+	} trap RETURN {r} {
 	    # the post-process says skip the rest of the post-processes but return its result
+	    Debug.process {Post '$P' says skip the rest of Post processes ($r)}
 	    break
 	} trap PASSTHRU {r eo} {
 	    # the process will handle its own response
-	    Debug.httpd {process will handle its own response}
+	    Debug.process {process will handle its own response}
 	    return -options $eo $r
 	} on error {e eo} {
 	    # the pre-process failed - skip its contribution
+	    Debug.process {Post '$P' failed returned '$e' ($eo)}
 	} on ok {r} {
 	    # the preprocess returned a response, consume it
+	    Debug.process {Post '$P' returned '$r'}
 	}
     }
 
@@ -122,7 +128,7 @@ proc process {R} {
 
     # Process the request+entity in a bespoke coroutine
     if {[llength [info commands process.$socket]]} {
-	Debug.httpd {Starting process process.socket}
+	Debug.process {Starting process process.socket}
 	process.$socket $R
     } else {
 	# default - do some Pre Process and Post action
@@ -130,7 +136,7 @@ proc process {R} {
 	corovar process
 	variable post
 	coroutine process.$socket.$transaction ::apply [list {r socket pre process post tx} {
-	    Debug.httpd {Starting process [info coroutine]}
+	    Debug.process {Starting process [info coroutine]}
 	    set r [Pre $r $pre]		;# pre-process the request
 
 	    # Process request: run the $process command
@@ -140,26 +146,26 @@ proc process {R} {
 	    #	error - the process has errored - make a ServerError response
 	    #	ok - the process has returned its reply
 	    try {
-		Debug.httpd {TRY process '$process'}
+		Debug.process {TRY process '$process'}
 		{*}$process $r
 	    } trap CONTINUE {e eo} {
 		# the process has nothing to say, post process
-		Debug.httpd {process has nothing to say}
+		Debug.process {process has nothing to say}
 	    } trap PASSTHRU {e eo} {
 		# the process will handle its own response
-		Debug.httpd {process will handle its own response}
+		Debug.process {process will handle its own response}
 		return -options $eo $e
 	    } trap SUSPEND {e eo} {
 		# the process will handle its own response
-		Debug.httpd {process will handle its own response}
+		Debug.process {process will handle its own response}
 		return
 	    } on error {e eo} {
 		# the process errored out - generate an error
-		Debug.httpd {process has failed '$e' ($eo)}
+		Debug.process {process has failed '$e' ($eo)}
 		set r [ServerError $r $e $eo]
 	    } on ok {result} {
 		# the process returned a response, post-process then send it
-		Debug.httpd {process returned ($result)}
+		Debug.process {process returned ($result)}
 		if {[dict size $result]} {
 		    set r $result
 		}
@@ -167,7 +173,7 @@ proc process {R} {
 
 	    set r [Post $r $post]	;# post-process the request
 
-	    #puts stderr "DONE PROCESS [info coroutine] $socket"
+	    Debug.process {DONE PROCESS [info coroutine] $socket}
 	    return $r
 	} [namespace current]] $R [dict get $R -socket] $pre $process $post [dict get $R -tx]
     }

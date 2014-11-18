@@ -284,39 +284,6 @@ after 0 {::apply {{} {
 vwait phase	;# wait for this testing phase to finish
 puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
 
-# perform tests in event space
-after 0 {::apply {{} {
-    puts stderr "Phase:$::phase Convert Tests - test the HConvert module"
-    package require HConvert
-
-    if {1} {
-	test simple-Convert {perform a simple GET with identity conversion returning some html} -setup {
-	    set ::listener [H listen process [list ::apply {{r} {
-		H Ok $r content-type text/x-html <p>Moop</p>
-	    }}] {*}$::defaults $::port]
-	} -body {
-	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
-	    
-	    ::http::wait $token
-	    
-	    test_dict $token {
-		-code 200
-		content-type text/html
-		server {H *}
-		vary accept-encoding
-		content-length 11
-	    }
-	} -cleanup {
-	    chan close $::listener
-	}
-    }
-
-    incr ::phase	;# these tests are complete
-}}}
-
-vwait phase	;# wait for this testing phase to finish
-puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
-
 # the tests need to be in event space
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Multiple Asynch Request"
@@ -414,3 +381,48 @@ vwait phase
 
 puts stderr Phase:$::phase
 puts "Open Chans [llength [chan names]]: [chan names]"
+
+# perform tests in event space
+after 0 {::apply {{} {
+    puts stderr "Phase:$::phase Convert Tests - test the HConvert module"
+    #Debug on convert
+
+    package require HConvert
+
+    namespace eval ::conversions {
+	proc .text/x-1.text/html {R} {
+	    return [H Reply $R content-type text/html]
+	}
+    }
+
+    Convert create ::convert
+    lappend H::post [list ::convert convert]
+
+    if {1} {
+	test simple-Convert {perform a simple GET with identity conversion returning some html} -setup {
+	    set ::listener [H listen process [list ::apply {{r} {
+		H Ok $r content-type text/x-1 <p>Moop</p>
+	    }}] {*}$::defaults $::port]
+	} -body {
+	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	    
+	    ::http::wait $token
+	    
+	    test_dict $token {
+		-code 200
+		content-type text/html
+		server {H *}
+		vary accept-encoding
+		content-length 11
+	    }
+	} -cleanup {
+	    chan close $::listener
+	}
+    }
+
+    Debug off convert
+    incr ::phase	;# these tests are complete
+}}}
+
+vwait phase	;# wait for this testing phase to finish
+puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
