@@ -8,7 +8,7 @@
 
 package require OO
 
-package provide Convert 1.0
+package provide HConvert 1.0
 
 if {[info exists argv0] && ($argv0 eq [info script])} {
     lappend auto_path [pwd]
