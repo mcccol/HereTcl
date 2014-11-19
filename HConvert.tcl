@@ -363,7 +363,7 @@ class create Convert {
 		    Debug.convert {[self] '$transform($el)' transformer SUCCESS: '$oldtype->$ctype'}
 		} elseif {$oldtype eq $ctype} {
 		    # a transformer hasn't set a new mime type.
-		    dict set rsp content-type $expected
+		    dict set rsp -reply content-type $expected
 		    Debug.error {Convert [self] '$transform($el)' transformer FAILED to set content type to $expected, instead it set it to $ctype - FIX please}
 		} else {
 		    # restart the transformation with new content type
@@ -389,13 +389,13 @@ class create Convert {
 	}
 
 	# raw responses get no conversion
-	if {[dict exists $rq -reply raw]} {
-	    if {[dict get $rq -reply raw]} {
+	if {[dict exists $rq -reply -raw]} {
+	    if {[dict get $rq -reply -raw]} {
 		Debug.convert {[self] request is -raw, return}
 		return $rq	;# this is raw - no conversion
 	    }
 	} else {
-	    dict set rq -reply raw 0
+	    dict set rq -reply -raw 0
 	}
 
 	# avoid identity conversions
@@ -436,7 +436,7 @@ class create Convert {
 
 	# perform each transformation on the path
 	# any step may set -raw to avoid further conversion
-	while {![dict get $rq -reply raw]} {
+	while {![dict get $rq -reply -raw]} {
 	    # transform according to mime type
 	    # determine the current best path from the current content-type
 	    # and one of the acceptable types.
@@ -472,8 +472,8 @@ class create Convert {
 		Debug.convert {[self] transformer ($transform($el)) Error $e ($eo)}
 		set rq [H ServerError $rq $e $eo]
 	    } finally {
-		if {![dict exists $rq -reply raw]} {
-		    dict set rq -reply raw 0	;# we're going to repeat this, so ensure we have a -reply raw setting
+		if {![dict exists $rq -reply -raw]} {
+		    dict set rq -reply -raw 0	;# we're going to repeat this, so ensure we have a -reply raw setting
 		}
 	    }
 
@@ -483,6 +483,7 @@ class create Convert {
 
 	Debug.convert {[self] conversion complete: }
 	Debug.convert {[self] accepting final: '[dict get? $rq accept]'}
+	dict set rq -reply content-length [string length [dict get -reply -content]]
 	return $rq
     }
 
