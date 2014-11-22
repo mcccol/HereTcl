@@ -441,6 +441,7 @@ namespace eval H::WebSocket {
 		Debug.websocket {yield in coroutine [namespace current]::$chan}
 		yield
 		set line [gets $chan]
+		if {[eof $chan]} break
 		Debug.websocket {readable in coroutine [namespace current]::$chan got '$line'}
 		puts $chan $line
 		flush $chan
