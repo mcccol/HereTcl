@@ -1,4 +1,4 @@
-# Hws - H WebSocket processor
+# HWebSocket - H WebSocket processor
 package require Debug
 
 Debug define websocket
@@ -51,7 +51,7 @@ namespace eval H::WebSocket {
 		} else {
 		    dict set frame type binary
 		}
-
+		
 		if {$fin} {
 		    dict set frame payload $payload
 		    finished_message $frame
@@ -62,11 +62,11 @@ namespace eval H::WebSocket {
 		    error "Received new text/binary frame inside fragmented message"
 		}
 	    }
-
+	    
 	    3 - 4 - 5 - 5 - 7 {
 		# reserved for further non-control frames
 	    }
-
+	    
 	    8 {
 		# denotes a connection close
 		# if we have sent a close - we just close
@@ -81,30 +81,30 @@ namespace eval H::WebSocket {
 		    chan close $socket
 		}
 	    }
-
+	    
 	    9 {
 		# denotes a ping - must reply with a pong frame
 		# A Ping frame may serve either as a keepalive
 		# or as a means to verify that the remote endpoint is still responsive.
-
+		
 		# Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in
 		# response, unless it already received a Close frame.  It SHOULD
 		# respond with Pong frame as soon as is practical.
-
+		
 		# A Pong frame sent in response to a Ping frame must have identical
 		# "Application data" as found in the message body of the Ping frame
 		# being replied to.
-
+		
 		# If an endpoint receives a Ping frame and has not yet sent Pong
 		# frame(s) in response to previous Ping frame(s), the endpoint MAY
 		# elect to send a Pong frame for only the most recently processed Ping
 		# frame.
-
+		
 		if {![info exists closed]} {
-		    puts -nonewline $socket [binary format aca* \x8A [dict get $frame ll] $payload
+		    puts -nonewline $socket [binary format aca* \x8A [dict get $frame ll] $payload]
 		}
 	    }
-
+		
 	    A {
 		# denotes a pong - in response to a ping frame we have sent
 		# A Ping frame may serve either as a keepalive
@@ -362,7 +362,6 @@ namespace eval H::WebSocket {
 	    variable chan
 	    Debug.websocket {configure $cid $option $value}
 	    switch -- $option {
-		-coro -
 		-socket {
 		    dict set chan($cid) [string trimleft $option -] $value
 		}
@@ -426,9 +425,27 @@ namespace eval H::WebSocket {
 	namespace ensemble create -subcommands {}
     }
 
-    # websocket - called from Hrx when a websocket handshake is detected
+    # create - a simple-minded dispatcher for incoming WS connections
+    # this example ignores the GET data, and just makes an echo coroutine
+    # it is expected this will be replaced by something more complete
+    proc create {R chan} {
+	coroutine [namespace current]::$chan apply [list {R chan} {
+	    Debug.websocket {started coroutine [namespace current]::$chan}
+	    chan event $chan readable [info coroutine]
+	    while {![eof $chan]} {
+		Debug.websocket {yield in coroutine [namespace current]::$chan}
+		yield
+		set line [gets $chan]
+		Debug.websocket {readable in coroutine [namespace current]::$chan got '$line'}
+		puts $chan $line
+		Debug.websocket {sent line in coroutine [namespace current]::$chan}
+	    }
+	} [namespace current]] $R $chan
+    }
+
+    # connect - called from Hrx when a websocket handshake is detected
     #
-    # running inside the RX coroutine, still has the TX coroutine
+    # running inside the RX coroutine, still has the TX coroutine to talk to
     proc connect {R} {
 	corovar socket
 	Debug.websocket {[info coroutine] WebSocket connect ($R) [chan configure $socket]}
@@ -454,7 +471,6 @@ namespace eval H::WebSocket {
 		}
 		dict set rsp upgrade websocket
 		dict set rsp connection Upgrade
-		#dict set rsp sec-websocket-version 13
 		dict set rsp -code 101	;# Switching Protocols
 
 		# websocket protocols - find the values requested and see what we have to match ws_$protocol
@@ -465,6 +481,7 @@ namespace eval H::WebSocket {
 			break
 		    }
 		}
+
 		if {[llength $protocol]} {
 		    dict set rsp sec-websocket-protocol [join $protocol ", "]
 		}
@@ -487,7 +504,6 @@ namespace eval H::WebSocket {
 	    }
 	} trap HTTP {e eo} {
 	    Debug.httpd {[info coroutine] Httpd $e}
-
 	} on error {e eo} {
 	    Debug.error {[info coroutine] Error '$e' ($eo)}
 	    set R [ServerError $R $e $eo]
@@ -502,9 +518,10 @@ namespace eval H::WebSocket {
 
 	    # create a refchan for the websocket interaction
 	    corovar chan; set chan [chan create {read write} [namespace code Chan]]
-	    chan configure $chan -coro [info coroutine]
 
-	    tailcall active $R
+	    create $R $chan	;# call something to create a websocket given the connection guff
+
+	    tailcall active $R	;# go on to activate the websocket
 	}
 
 	# we have rejected the websocket procotol - close up shop

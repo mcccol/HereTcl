@@ -141,6 +141,43 @@ proc url {args} {
     return $result
 }
 
+# parsePath_url --
+#
+#	parse a url path+fragment+query into its constituent parts
+#
+# Arguments:
+#	args	url to parse
+#
+# Results:
+#	array form of parsed URL elements
+#
+# Side Effects:
+#	none
+
+proc parsePath_url {url {normalize 1}} {
+    Debug.url {Url parsePath $url - norm? $normalize}
+    array set x {}
+    regexp {^([^?\#]*)([?]([^\#]*))?(\#(.*))?$} $url \
+	-> x(path) . x(query) . x(fragment)
+
+    Debug.url {Url parsePath 1: $url -> [array get x]}
+
+    if {$normalize} {
+	set x(path) [normalize [decode $x(path)]]	;# fix up oddities in URLs
+	set x(normalized) 1
+    }
+
+    foreach n [array names x] {
+	if {$x($n) eq ""} {
+	    unset x($n)
+	}
+    }
+
+    Debug.url {Url parsePath: $url -> [array get x]}
+
+    return [array get x]
+}
+
 proc parse_url {url} {
     array set x {}
     regexp {^(([^:/?\#]+):)?(//([^/?\#]*))?([^?\#]*)([?]([^\#]*))?(\#(.*))?$} $url \
@@ -175,6 +212,42 @@ proc parse_url {url} {
     }
 
     return [array get x]
+}
+
+# freeparse_url - parse a free form url-ish string
+proc freeparse_url {urlish args} {
+    if {[llength $args] == 1} {
+	set args [lindex $args 0]
+    }
+
+    # set defaults in url dict from args
+    set result {scheme http}
+    foreach {f def} {scheme host port} {
+	if {[dict exists $args $f]} {
+	    dict set result $f [dict get $args $f]
+	}
+    }
+
+    switch -nocase -glob -- $urlish {
+	http* {
+	    # full URL
+	    set result [parse_url $urlish]
+	}
+	//* {
+	    # host-absolute path-absolute - parse+normalize
+	    set urlish /[join [lassign [split $urlish /] -> host] /]
+	    set result [dict merge $result [list host $host] [parsePath_url $urlish]]
+	}
+	/* {
+	    # host-relative path-absolute - parse+normalize
+	    set result [dict merge $result [parsePath_url $urlish]]
+	}
+	default {
+	    # host-relative path-relative - parse but don't normalize
+	    set result [dict merge $result [parsePath_url $urlish 0]]
+	}
+    }
+    return $result
 }
 
 # host - construct the host part of a URL dict

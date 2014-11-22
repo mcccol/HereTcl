@@ -42,6 +42,7 @@ variable toplevel {<html>
     <p><a href='h/moop'>This link</a> shows you the default error you get if there's something wrong.</p>
     <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
     <p><a href='echo'>This link</a> is a simple test of WebSocket support - it doesn't do much yet.</p>
+    <p><a href='redir'>This link</a> is a redirection test.</p>
 
     <p>Here are the fossil repositories containing this instance.</p>
     <ul>$fossil</ul>
@@ -57,25 +58,61 @@ variable toplevel {<html>
     </html>
 }
 
+# websocket test from https://www.websocket.org/echo.html
 variable echojs {
-    var exampleSocket = new WebSocket("ws://localhost:8080/echo");
-    exampleSocket.onopen = function (event) {
-	exampleSocket.send("Here's some text that the server is urgently awaiting!"); 
-    };
-    exampleSocket.onmessage = function (event) {
-	console.log(event.data);
-    };
-    //exampleSocket.close();
+    var wsUri = "ws://localhost:8080/echo";
+    var output;
+
+    function init() {
+	output = document.getElementById("output"); testWebSocket(); 
+    }
+
+    function writeToScreen(message) {
+	var pre = document.createElement("p");
+	pre.style.wordWrap = "break-word";
+	pre.innerHTML = message; output.appendChild(pre);
+    }
+
+    function testWebSocket() {
+	websocket = new WebSocket(wsUri);
+	websocket.onopen = function(evt) { onOpen(evt) };
+	websocket.onclose = function(evt) { onClose(evt) };
+	websocket.onmessage = function(evt) { onMessage(evt) };
+	websocket.onerror = function(evt) { onError(evt) };
+    }
+
+    function onOpen(evt) {
+	writeToScreen("CONNECTED");
+	doSend("WebSocket test\n");
+    }
+
+    function onClose(evt) {
+	writeToScreen("DISCONNECTED");
+    }
+
+    function onMessage(evt) {
+	writeToScreen('<span style="color: blue;">RESPONSE: ' + evt.data+'</span>'); websocket.close();
+    }
+
+    function onError(evt) {
+	writeToScreen('<span style="color: red;">ERROR:</span> ' + evt.data);
+    }
+
+    function doSend(message) {
+	writeToScreen("SENT: " + message);  websocket.send(message);
+    }
+
+    window.addEventListener("load", init, false);
 }
 
-variable echo [subst {<html>
-    <head>
-    </head>
-    <body>
-    <h1>WebSockets</h1>
-    <script>$echojs</script>
-    </body>
-    </html>
+variable echo [subst {
+    <!DOCTYPE html>
+    <meta charset="utf-8" />
+    <title>WebSocket Test</title>
+    <script language="javascript" type="text/javascript">
+    $echojs
+    </script>
+    <h2>WebSocket Test</h2>  <div id="output"></div> 
 }]
 
 
@@ -96,6 +133,19 @@ Direct create dispatcher {
     # echo - use websockets to echo stuff back and forth between client and server
     method /echo {r} {
 	return [H Ok $r content-type text/html $::echo]
+    }
+
+    # redirection test
+    method /redir {r} {
+	return [H Redirect $r http://localhost:8080/redirected]
+    }
+    method /redirected {r} {
+	return [H Ok $r content-type text/html {<html>
+	    <body>
+	    <p>Redirected!</p>
+	    </body>
+	    </html>
+	}]
     }
 
     method / {r} {

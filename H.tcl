@@ -120,7 +120,7 @@ interp bgerror {} [list H BGERROR [interp bgerror {}]]
 package provide H 8.0
 
 # load minimal H components
-H::load Hrx.tcl Htx.tcl Hproc.tcl Herr.tcl
+H::load Hrx.tcl Htx.tcl Hproc.tcl Herr.tcl Hredir.tcl Hurl.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {
