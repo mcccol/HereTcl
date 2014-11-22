@@ -21,7 +21,6 @@ namespace eval H::WebSocket {
     # process_frame - having received a frame, and its payload, switch on opcode or continue to aggregate fragments
     proc process_frame {frame payload} {
 	corovar message
-	corovar closed
 	corovar chan
 
 	Debug.websocket {[info coroutine] WebSocket process_frame done ($frame) '[binary encode hex $payload]'}
@@ -71,13 +70,17 @@ namespace eval H::WebSocket {
 		# denotes a connection close
 		# if we have sent a close - we just close
 		# if we have not sent a close - we must send a close in response
-		if {![info exists closed]} {
-		    puts -nonewline $socket [binary format aa \x88 \0]
+		corovar socket
+		corovar closed
+		if {!$closed} {
+		    Debug.websocket {[info coroutine] WebSocket closed by remote}
+		    catch {puts -nonewline $socket [binary format aa \x88 \0]}
 		    incr closed
 		    chan close $socket write
 		    Chan closed $chan
 		} else {
 		    # the other side has closed - so now we close too
+		    Debug.websocket {[info coroutine] WebSocket close acknowledged by remote}
 		    chan close $socket
 		}
 	    }
@@ -101,6 +104,7 @@ namespace eval H::WebSocket {
 		# frame.
 		
 		if {![info exists closed]} {
+		    corovar socket
 		    puts -nonewline $socket [binary format aca* \x8A [dict get $frame ll] $payload]
 		}
 	    }
@@ -338,7 +342,7 @@ namespace eval H::WebSocket {
 	    set opcode [expr {$opcode | 0x80}]
 	    set result [binary format c $opcode]
 
-	    if {$type eq "text"} {
+	    if {[dict get $chan($cid) type] eq "text"} {
 		set data [encoding convertto utf-8 $data]
 	    }
 
@@ -369,6 +373,7 @@ namespace eval H::WebSocket {
 		-binary {
 		    dict set chan($cid) type binary
 		}
+
 		-text {
 		    dict set chan($cid) type text
 		}
@@ -438,6 +443,7 @@ namespace eval H::WebSocket {
 		set line [gets $chan]
 		Debug.websocket {readable in coroutine [namespace current]::$chan got '$line'}
 		puts $chan $line
+		flush $chan
 		Debug.websocket {sent line in coroutine [namespace current]::$chan}
 	    }
 	} [namespace current]] $R $chan
@@ -449,7 +455,7 @@ namespace eval H::WebSocket {
     proc connect {R} {
 	corovar socket
 	Debug.websocket {[info coroutine] WebSocket connect ($R) [chan configure $socket]}
-
+	corovar closed; set closed 0
 	try {
 	    Readable $socket	;# turn off the chan event readable
 
@@ -518,6 +524,7 @@ namespace eval H::WebSocket {
 
 	    # create a refchan for the websocket interaction
 	    corovar chan; set chan [chan create {read write} [namespace code Chan]]
+	    chan configure $chan -socket $socket
 
 	    create $R $chan	;# call something to create a websocket given the connection guff
 

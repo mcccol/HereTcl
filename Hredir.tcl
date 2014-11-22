@@ -29,7 +29,7 @@ proc redir {defaults to args} {
 	set args [lindex $args 0]
     }
 
-    set todict [freeparse_url $to $defaults]	;# parse the destination URL
+    set todict [H freeparse_url $to $defaults]	;# parse the destination URL
 
     if {[dict exists $todict -query]} {
 	foreach {n v} [Query flatten [Query parse $todict]] {
