@@ -19,6 +19,7 @@ package require Debug	;# provides debugging narrative
 package require Direct	;# provides Direct domain - namespace/TclOO command access via URL
 package require File	;# provides File domain - deliver content of file system via URL
 package require H	;# provides the H HTTP server itself
+package require HWebSocket
 
 Debug on error		;# we always want to see errors
 
@@ -55,6 +56,28 @@ variable toplevel {<html>
     </html>
 }
 
+variable wsjs1 {
+    var exampleSocket = new WebSocket("ws://localhost:8080/moop");
+    exampleSocket.onopen = function (event) {
+	exampleSocket.send("Here's some text that the server is urgently awaiting!"); 
+    };
+    exampleSocket.onmessage = function (event) {
+	console.log(event.data);
+    };
+    //exampleSocket.close();
+}
+
+variable ws1 [subst {<html>
+    <head>
+    </head>
+    <body>
+    <h1>WebSockets</h1>
+    <script>$wsjs1</script>
+    </body>
+    </html>
+}]
+
+
 # dispatcher - this is the thing which determines where and how requests are processed
 # dispatcher is an instance of the Direct object, it interprets HTTP requests as
 # Tcl command invocations (with arguments.)
@@ -67,6 +90,10 @@ Direct create dispatcher {
     }
     method /user {r} {
 	return [user do $r]
+    }
+
+    method /ws1 {r} {
+	return [H Ok $r content-type text/html $::ws1]
     }
 
     method / {r} {
@@ -148,6 +175,7 @@ Debug off direct
 Debug off process
 
 Debug off httpd
+Debug on websocket
 Debug off listener
 Debug off httpdlow
 Debug off httpdtx

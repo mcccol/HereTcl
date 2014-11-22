@@ -632,7 +632,7 @@ proc RxProcess {R {server 1}} {
 		switch -- [string tolower [dict get $R upgrade]] {
 		    websocket {
 			# websocket handshake
-			return -code error -errorcode PASSTHRU $R	;# abort the caller command, initiate WEBSOCKET mode
+			return -code error -errorcode WEBSOCKET $R	;# abort the caller command, initiate WEBSOCKET mode
 		    }
 		    default {
 			Bad $R "Unknown Upgrade '[dict get $R upgrade]'"
@@ -717,7 +717,11 @@ proc Rx {args} {
 		# keep processing more input - this dispatcher has suspended
 		Debug.httpd {[info coroutine] Dispatch: SUSPEND}
 	    } trap WEBSOCKET {r eo} {
-		tailcall WebSocket connect $r
+		if {[info exists timer]} {
+		    catch {::after cancel $timer}; unset timer
+		}
+		Readable $socket
+		WebSocket connect $r
 	    } trap PASSTHRU {e eo} {
 		Debug.httpd {[info coroutine] Dispatch: PASSTHRU}
 		return -options $eo $e
@@ -744,7 +748,8 @@ proc Rx {args} {
 	    Debug.httpd {[info coroutine] Httpd $e}
 	}
     } trap WEBSOCKET {r eo} {
-	tailcall websocket $r
+	#websocket $r
+	Debug.error {[info coroutine] Error WebSocket caught in wrong place}
     } trap PASSTHRU {} {
 	# the process has handed off our socket to another process
 	# we have nothing to do but wait

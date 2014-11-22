@@ -154,6 +154,9 @@ namespace eval H {
 
     # Values - handle multiple instances of a field
     proc Values {R key {delim ""}} {
+	if {![dict exists $R $key]} {
+	    return {}
+	}
 	if {[dict exists $R -Header multiple $key]} {
 	    set values [dict get $R $key]
 	} else {

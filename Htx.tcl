@@ -805,7 +805,7 @@ proc Tx {args} {
 
 	if {!$passthru} {
 	    catch {chan close $socket write}
+	    state_log {"" tx closed $socket $trx $sent [llength $pending]}
 	}
-	state_log {"" tx closed $socket $trx $sent [llength $pending]}
     }
 }
