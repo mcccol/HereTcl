@@ -41,6 +41,7 @@ variable toplevel {<html>
 
     <p><a href='h/moop'>This link</a> shows you the default error you get if there's something wrong.</p>
     <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
+    <p><a href='echo'>This link</a> is a simple test of WebSocket support - it doesn't do much yet.</p>
 
     <p>Here are the fossil repositories containing this instance.</p>
     <ul>$fossil</ul>
@@ -56,8 +57,8 @@ variable toplevel {<html>
     </html>
 }
 
-variable wsjs1 {
-    var exampleSocket = new WebSocket("ws://localhost:8080/moop");
+variable echojs {
+    var exampleSocket = new WebSocket("ws://localhost:8080/echo");
     exampleSocket.onopen = function (event) {
 	exampleSocket.send("Here's some text that the server is urgently awaiting!"); 
     };
@@ -67,12 +68,12 @@ variable wsjs1 {
     //exampleSocket.close();
 }
 
-variable ws1 [subst {<html>
+variable echo [subst {<html>
     <head>
     </head>
     <body>
     <h1>WebSockets</h1>
-    <script>$wsjs1</script>
+    <script>$echojs</script>
     </body>
     </html>
 }]
@@ -92,8 +93,9 @@ Direct create dispatcher {
 	return [user do $r]
     }
 
-    method /ws1 {r} {
-	return [H Ok $r content-type text/html $::ws1]
+    # echo - use websockets to echo stuff back and forth between client and server
+    method /echo {r} {
+	return [H Ok $r content-type text/html $::echo]
     }
 
     method / {r} {
