@@ -64,7 +64,7 @@ variable echojs {
     var output;
 
     function init() {
-	output = document.getElementById("output"); testWebSocket(); 
+	output = document.getElementById("output"); testWebSocket();
     }
 
     function writeToScreen(message) {
@@ -115,7 +115,6 @@ variable echo [subst {
     <h2>WebSocket Test</h2>  <div id="output"></div> 
 }]
 
-
 # dispatcher - this is the thing which determines where and how requests are processed
 # dispatcher is an instance of the Direct object, it interprets HTTP requests as
 # Tcl command invocations (with arguments.)
@@ -128,6 +127,11 @@ Direct create dispatcher {
     }
     method /user {r} {
 	return [user do $r]
+    }
+
+    # echo - use websockets to echo stuff back and forth between client and server
+    method /echo1 {r} {
+	return [H Ok $r content-type text/html $::echo1]
     }
 
     # echo - use websockets to echo stuff back and forth between client and server
