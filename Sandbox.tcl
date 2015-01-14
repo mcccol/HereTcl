@@ -16,6 +16,28 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 }
 
 package require Debug	;# provides debugging narrative
+
+# we don't so much care about these other debug narratives
+Debug define query
+Debug off file
+Debug off direct
+Debug off process
+
+Debug off httpd
+Debug on websocket
+Debug off listener
+Debug off httpdlow
+Debug off httpdtx
+Debug off httpdtxlow
+Debug off entity
+Debug off cache
+Debug off cookies
+
+# source .hrc for local customisations
+if {[file exists [file join $::home .hrc]]} {
+    source [file join $::home .hrc]
+}
+
 package require Direct	;# provides Direct domain - namespace/TclOO command access via URL
 package require File	;# provides File domain - deliver content of file system via URL
 package require H	;# provides the H HTTP server itself
@@ -60,7 +82,7 @@ variable toplevel {<html>
 
 # websocket test from https://www.websocket.org/echo.html
 variable echojs {
-    var wsUri = "ws://localhost:8080/echo";
+    var wsUri = "ws://$host:$port/echo";
     var output;
 
     function init() {
@@ -130,13 +152,10 @@ Direct create dispatcher {
     }
 
     # echo - use websockets to echo stuff back and forth between client and server
-    method /echo1 {r} {
-	return [H Ok $r content-type text/html $::echo1]
-    }
-
-    # echo - use websockets to echo stuff back and forth between client and server
     method /echo {r} {
-	return [H Ok $r content-type text/html $::echo]
+	set host [dict get $r -Url host]
+	set port [dict get $r -Url port]
+	return [H Ok $r content-type text/html [subst -nobackslashes $::echo]]
     }
 
     # redirection test
@@ -223,22 +242,6 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 	}
     }} {*}$fossil
 }
-
-# we don't so much care about these other debug narratives
-Debug define query
-Debug off file
-Debug off direct
-Debug off process
-
-Debug off httpd
-Debug on websocket
-Debug off listener
-Debug off httpdlow
-Debug off httpdtx
-Debug off httpdtxlow
-Debug off entity
-Debug off cache
-Debug off cookies
 
 # start the H server's listener
 set largs {}
