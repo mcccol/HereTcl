@@ -6,16 +6,7 @@ H::load Hproc.tcl
 
 puts stderr "[package present H] Unit Tests"
 Debug on error
-Debug off listener
-Debug off httpd
-Debug off httpdlow
-Debug off httpdtx
-Debug off httpdtxlow
-Debug off process
-Debug off entity
-Debug define cache
-Debug define cookies
-Debug define httpdchan
+Debug on httpbad
 
 if {0} {
     interp bgerror {} BGERROR
@@ -86,6 +77,17 @@ set phase 0
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Simple Tests"
     
+    Debug off listener
+    Debug off httpd
+    Debug off httpdlow
+    Debug off httpdtx
+    Debug off httpdtxlow
+    Debug off process
+    Debug off entity
+    Debug define cache
+    Debug define cookies
+    Debug define httpdchan
+
     if {1} {
 	test simple-GET {perform a simple GET which returns some html} -setup {
 	    set ::listener [H listen process [list ::apply {{r} {
@@ -182,20 +184,22 @@ after 0 {::apply {{} {
 	chan close $::listener
     }
 
-    test simple-ABORT {generate a protocol-level abort, make sure it's received} -setup {
-	set ::om $H::methods
-	set H::methods {}	;# no matter what we send it will abort
-	set ::listener [H listen process [list ::apply {{r} {}}] $::port]
-    } -body {
-	set token [::http::geturl http://localhost:$::port/ -timeout 100]
-	::http::wait $token
-	
-	test_dict $token {
-	    -http {HTTP/1.1 405 Method Not Allowed}
+    if {0} {
+	test simple-ABORT {generate a protocol-level abort, make sure it's received} -setup {
+	    set ::om $H::methods
+	    set H::methods {}	;# no matter what we send it will abort
+	    set ::listener [H listen process [list ::apply {{r} {}}] $::port]
+	} -body {
+	    set token [::http::geturl http://localhost:$::port/ -timeout 100]
+	    ::http::wait $token
+	    
+	    test_dict $token {
+		-http {HTTP/1.1 405 Method Not Allowed}
+	    }
+	} -cleanup {
+	    set H::methods $::om
+	    chan close $::listener
 	}
-    } -cleanup {
-	set H::methods $::om
-	chan close $::listener
     }
 
     test simple-BINARY {send 1k of random bytes to the server, which echoes it back unchanged, compare received with sent data} -setup {
@@ -288,10 +292,23 @@ puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Multiple Asynch Request"
 
+    # This test sends multiple asynchronous requests to the server and collects its responses
+
+    Debug off listener
+    Debug on httpd
+    Debug off httpdlow
+    Debug on httpdtx
+    Debug on httpdtxlow
+    Debug on process
+    Debug off entity
+    Debug define cache
+    Debug define cookies
+    Debug define httpdchan
+
     set ::listener [H listen process [list ::apply {{r} {
 	# this server snippet returns the trailing uri element as a text/html val
 	set val [string trim [dict get $r -Header uri] /]
-	#puts stderr "DO: $val"
+	puts stderr "DO: $val"
 	H Ok $r content-type text/plain $val
     }}] {*}$::defaults $::port]
 
@@ -318,11 +335,16 @@ after 0 {::apply {{} {
 	    puts stderr "ERR:'$e'($eo)/([array get r])"
 	}
     }}]
-    
+ 
     set ::start_time [clock microseconds]
+    set ::result() MOOP
     for {set i 0} {$i < $::maxports} {incr i} {
+	puts stderr "ASYNC req $i/$::maxports"
 	set ::result($i) [::http::geturl http://localhost:$::port/$i -timeout 0 -command [list {*}$cmd $i]]
+	puts stderr "ASYNC req $i - $result($i)"
     }
+    unset ::result()
+    puts stderr "ASYNC req done ([array get ::result])"
 }}}
 
 vwait phase	;# wait for this testing phase to finish

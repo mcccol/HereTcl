@@ -151,7 +151,7 @@ oo::class create Direct {
 
     # Call - invoke command
     method Call {rsp cmd args} {
-	return [dict merge $rsp [my $cmd $rsp {*}$args]]
+	tailcall dict merge $rsp [my $cmd $rsp {*}$args]
     }
 
     # Parameters - extract actual parameters from request for formal parameters in method
@@ -250,6 +250,37 @@ oo::class create Direct {
 	return -code error -errorcode PASSTHRU	;# abort the caller command, initiate PASSTHRU mode
     }
 
+    method wscall {args} {
+	Debug.direct {[info coroutine] [self] wscall $args}
+	return [my {*}$args]
+    }
+
+    method ws {r} {
+	# normal HTTP dispatch, but with WebSocket
+	set r [my Url $r]	;# expand out the -Url element a bit
+
+	Debug.direct {[info coroutine] ws $r}
+
+	variable methods
+	set cmd [dict get $r -Url cmd]
+	if {![dict exists $methods $cmd] eq {}} {
+	    Debug.direct {default not found looking for $cmd in ($methods)}
+	    return [H NotFound $r]
+	}
+
+	variable parameters
+	if {$parameters} {
+	    lassign [my Parameters $r] argl argll
+	} else {
+	    set argl {}; set argll {}
+	}
+
+	Debug.direct {[self] calling websocket method $cmd [string range $argl 0 80]... [dict keys $argll]}
+	upvar #1 wsprocess wsprocess; set wsprocess [list [self] wscall $cmd]
+	dict set r -ws [list [self] wscall $cmd]		;# default to call the direct method for each WS event
+	return [my $cmd connect $r {*}$argl {*}$argll]	;# perform the direct call
+    }
+
     method do {r} {
 	# try for passthru first
 	if {[dict get $r -Header state] eq "Initial"} {
@@ -276,10 +307,12 @@ oo::class create Direct {
 	    }
 	}
 
+	# not passthru - process headers if necessary
 	if {[dict get $r -Header state] ne "Entity"} {
 	    set r [H RxProcess $r]	;# finish processing if necessary
 	}
 
+	# normal HTTP dispatch
 	set r [my Url $r]	;# expand out the -Url element a bit
 
 	Debug.direct {[self] do $r}
@@ -297,9 +330,9 @@ oo::class create Direct {
 	} else {
 	    set argl {}; set argll {}
 	}
-
+	
 	Debug.direct {calling method $cmd [string range $argl 0 80]... [dict keys $argll]}
-
+	
 	tailcall my Call $r $cmd {*}$argl {*}$argll	;# perform the direct call
     }
 

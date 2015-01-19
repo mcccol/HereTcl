@@ -120,7 +120,8 @@ interp bgerror {} [list H BGERROR [interp bgerror {}]]
 package provide H 8.0
 
 # load minimal H components
-H::load Hrx.tcl Htx.tcl Hproc.tcl Herr.tcl Hredir.tcl Hurl.tcl
+H::load Hrx.tcl Htx.tcl Herr.tcl Hredir.tcl Hurl.tcl
+H::load HWS.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {
@@ -268,8 +269,6 @@ namespace eval H {
 
     # construct an HTTP Bad response
     proc Bad {rq message {code 400} args} {
-	#puts stderr "BAD: $message $code ($rq)"
-
 	Debug.httpdbad {BAD: $message $code ($rq)}
 	if {[dict exists $rq -Header full]} {
 	    dict update rq -reply rsp {
@@ -377,8 +376,8 @@ namespace eval H {
 	    set Rx ${namespace}::R::$socket
 
 	    # create a coro for rx one for tx, arrange for the socket to close respective half on termination
-	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
 	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	;# create Tx coro around H::Tx command
+	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
 
 	    # from this point on, the coroutines have control of the socket
 	} on error {e eo} {

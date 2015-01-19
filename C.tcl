@@ -141,6 +141,10 @@ proc Cx {args} {
 		
 		reply {
 		    set rest [lassign $rest r]
+		    set r [Header $r 1]		;# fetch request/status line
+		    set r [RxHeaders $r]	;# fetch all remaining headers
+		    set r [CxCheck $r]		;# parse $headers as a complete request header
+		    set r [RxEntity $r]		;# fetch any entity
 		    Debug.client {[info coroutine] reply ($r) / ($callbacks)}
 		    {*}[dict get $callbacks [dict get $r -transaction]] $r
 		    dict unset callbacks [dict get $r -transaction]
@@ -186,17 +190,6 @@ proc CxCheck {r} {
     Debug.httpdlow {CxCheck done: $r}
     return $r
 }
-
-# CxProcess - default handling of packet reception for clients
-proc CxProcess {R} {
-    set R [Header $R 1]		;# fetch request/status line
-    set R [RxHeaders $R]	;# fetch all remaining headers
-    set R [CxCheck $R]		;# parse $headers as a complete request header
-    set R [RxEntity $R]		;# fetch any entity
-    return $R			;# return completed request
-}
-
-
 
 # speak - connect outward to a host, port
 proc speak {args} {
@@ -260,7 +253,7 @@ proc speak {args} {
 
     set args [dict merge $args [list port $port host $host socket $socket]]
     ::coroutine $Cx $namespace Cx {*}$args rx $Rx timer $timer	;# create Rx coro around H::Rx command
-    ::coroutine $Rx $namespace Rx rxprocess CxProcess dispatch [list $Cx reply] {*}$args tx $Cx	;# create coro for client
+    ::coroutine $Rx $namespace Rx dispatch [list $Cx reply] {*}$args tx $Cx	;# create coro for client
 
     chan event $socket writable [list $Cx connected]	;# await connection
 

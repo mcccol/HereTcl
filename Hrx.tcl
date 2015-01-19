@@ -24,6 +24,7 @@ proc Readable {socket args} {
     if {[llength $args]} {
 	lappend args "" [lindex [info level -1] 0]
     }
+    Debug.httpdlow {[info coroutine] Readable ($args)}
     return [chan event $socket readable $args]
 }
 
@@ -591,17 +592,16 @@ variable rx_defaults [defaults {
     opts {}
     timeout {"" 20 Request 20 Header 20 ChunkSize 20 Chunked 20 RxEntitySized 20}
     ctype text/html
-    dispatch process	;# default processing is to call process
-    rxprocess RxProcess	;# default rx processing is to call RxProcess
+    wsprocess ""		;# default ws connect processing
 }]
 
 # RxProcess - default handling of packet reception - state machine
 # this can be overridden, and the application can take over processing
-proc RxProcess {R {server 1}} {
+proc RxProcess {R} {
     while {1} {
 	set state [lindex [dict get $R -Header state] 0]
 
-	Debug.httpd {[info coroutine] RxProcess in state '$state' ($R)}
+	Debug.process {[info coroutine] RxProcess in state '$state' ($R)}
 
 	switch -- $state {
 	    Initial {
@@ -611,7 +611,7 @@ proc RxProcess {R {server 1}} {
 
 	    Request {
 		# have read first line of header
-		if {$server && ![string match HTTP/* [lindex [split [string trim [dict get $R -Full]] " "] end]]} {
+		if {![string match HTTP/* [lindex [split [string trim [dict get $R -Full]] " "] end]]} {
 		    Bad $R "This isn't even HTTP '[string trim [dict get $R -Full]]'"
 		}
 		set R [RxHeaders $R]	;# fetch all remaining headers
@@ -628,11 +628,19 @@ proc RxProcess {R {server 1}} {
 	    }
 
 	    Upgrade {
-		# the header contains a 'Connection: Upgrade' field
+		# the header contains a 'Connection: Upgrade' field, from HeaderCheck
 		switch -- [string tolower [dict get $R upgrade]] {
 		    websocket {
 			# websocket handshake
-			return -code error -errorcode WEBSOCKET $R	;# abort the caller command, initiate WEBSOCKET mode
+			corovar wsprocess
+			if {[llength $wsprocess]} {
+			    dict set R -Header state WebSocket
+			    return -code error -errorcode WEBSOCKET $R	;# abort the caller command, initiate WEBSOCKET mode
+			} else {
+			    # if we haven't got a $wsprocess, then we can't upgrade to WS
+			    # so just treat this as an HTTP error
+			    Bad $R "Websocket Upgrade not enabled'"
+			}
 		    }
 		    default {
 			Bad $R "Unknown Upgrade '[dict get $R upgrade]'"
@@ -644,7 +652,7 @@ proc RxProcess {R {server 1}} {
 		# headers checked and conditioned
 		set R [RxEntity $R]
 	    }
-	    
+
 	    Entity {
 		# completely read entity
 		break
@@ -652,16 +660,23 @@ proc RxProcess {R {server 1}} {
 
 	    EOF {
 		# we got an EOF waiting for request
-		break
+		return -code error -errorcode EOF $R	;# abort the caller command
 	    }
-
+	    
 	    default {
 		error "Invalid Header state '$state'"
 	    }
 	}
     }
 
+    Debug.process {[info coroutine] RxProcess COMPLETED rx state '$state' ($R)}
     return $R
+}
+
+# suspend - utility code
+# discontinue processing this request, leave it up to the caller to reply
+proc suspend {R} {
+    return -errorcode SUSPEND $R
 }
 
 # Rx - coroutine to process pipeline reception
@@ -671,6 +686,11 @@ proc Rx {args} {
 
     set args [dict merge $rx_defaults $args]
     dict with args {}	;# install rx state vars
+
+    if {![info exists dispatch]} {
+	set dispatch RxProcess
+    }
+
     if {[info exists onconnect]} {
 	{*}$onconnect [info coroutine] [info locals]
     }
@@ -683,124 +703,139 @@ proc Rx {args} {
     # This can be used as a debugging aid to track coro state
     #trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
 
-    set passthru 0
+    set passthru 0	;# we're not in a passthru connection
     set headers {}
     #set timeout {}
     set transaction 0	;# unique count of packets received by this receiver
     set R {}
-    try {
-	# put receiver into header/CRLF mode and start listening for readable events
-	chan configure $socket -blocking 1
-	Readable $socket [info coroutine]	;# start listening on $socket with this coro
 
-	while {![catch {chan eof $socket} eof]
-	       && !$eof
-	       && [chan pending input $socket] != -1 && [chan pending output $socket] != -1
-	       && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
-	   } {
-	    state_log {R rx request $socket $transaction}
+    # put receiver into header/CRLF mode and start listening for readable events
+    chan configure $socket -blocking 1
+    Readable $socket [info coroutine]	;# start listening on $socket with this coro
+
+    while {![catch {chan eof $socket} eof]
+	   && !$eof
+	   && [chan pending input $socket] != -1 && [chan pending output $socket] != -1
+	   && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
+       } {
+	state_log {R rx request $socket $transaction}
 	    
+	try {
 	    # receive and process packet
 	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
 
-	    Debug.httpd {[info coroutine] Rx Process: '$rxprocess' ($R)}
-	    set R [{*}$rxprocess $R]	;# receive the request
+	    Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
+	    set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
+	    if {[info exists process]} {
+		set R [{*}$process $R]		;# mainly used to test H
+	    }
+	} trap HTTP {e eo} {
+	    # HTTP protocol error - usually from [H Bad] which has sent the error response
+	    state_log {R rx http $socket $transaction}
+	    Debug.httpd {[info coroutine] Httpd $e}
+	    break
+	} trap EOF {e eo} {
+	    # EOF while processing 
+	    Debug.httpd {[info coroutine] EOF waiting for request}
+	    break
+	} trap TIMEOUT {e eo} {
+	    if {[dict get $eo -errorcode] eq ""} {
+		state_log {R rx inactive $socket $transaction}
+		Debug.httpd {[info coroutine] Inactive $e}
+	    } else {
+		state_log {R rx timeout $socket $transaction}
+		Debug.httpd {[info coroutine] Httpd $e}
+	    }
+	    break
+	} trap SUSPEND {} {
+	    # keep processing more input - this dispatcher has suspended and will handle its own response
+	    Debug.httpd {[info coroutine] Dispatch: SUSPEND}
+	} trap WEBSOCKET {R eo} {
+	    # connection has been Upgraded to a WebSocket
+	    # HTTP processing is complete - turn off Rx events
+	    if {[info exists timer]} {
+		catch {::after cancel $timer}; unset timer	;# turn off idle timer immediately
+	    }
+	    catch {Readable $socket}		;# turn off the chan event readable
 
+	    Debug.httpd {[info coroutine] WEBSOCKET ($R) [namespace current] / ([namespace import])}
 	    try {
-		Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
-		set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
-	    } trap EOF {e eo} {
-		return -options $eo $e
-	    } trap TIMEOUT {e eo} {
-		return -options $eo $e
-	    } trap SUSPEND {} {
-		# keep processing more input - this dispatcher has suspended
-		Debug.httpd {[info coroutine] Dispatch: SUSPEND}
-	    } trap WEBSOCKET {r eo} {
-		if {[info exists timer]} {
-		    catch {::after cancel $timer}; unset timer
+		# abort the caller command, initiate WEBSOCKET mode
+		set R [ws accept $R]		;# construct websocket handshake
+		set R [{*}$wsprocess $R]	;# user processing
+		if {[dict exists $R -ws]} {
+		    set wsprocess [dict get $R -ws]
 		}
-		Readable $socket
-		WebSocket connect $r
-	    } trap PASSTHRU {e eo} {
-		Debug.httpd {[info coroutine] Dispatch: PASSTHRU}
-		return -options $eo $e
+		$tx websocket $R		;# transmit the websocket handshake accept
+		# tx websocket sends us back a message when the coast is clear,
+		# and all pending HTTP traffic has been sent.
+
+		while {1} {
+		    set rest [lassign [::yieldm] exception from]	;# wait for WEBSOCKET event
+		    if {$exception eq "WEBSOCKET"} break
+		    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $from $rest)}
+		}
+
+		# Now we know the Tx has shut down, we're free to websocket - go active
+		ws active $R		;# websocket owns this coroutine now
+	    } trap HTTP {e eo} {
+		Debug.httpd {[info coroutine] WebSocket Httpd $e}
 	    } on error {e eo} {
-		Debug.error {[info coroutine] Error '$e' ($eo)}
+		Debug.error {[info coroutine] WebSocket Error '$e' ($eo)}
 		set R [ServerError $R $e $eo]
 		$tx reply $R		;# transmit the error
-	    } on ok {} {
-		Debug.httpd {[info coroutine] Dispatch: OK}
-		$tx reply $R		;# finally, transmit the response
+	    }
+	} trap PASSTHRU {e eo} {
+	    # the process has handed off our socket to another process
+	    # we have nothing to do but wait
+	    Debug.httpd {[info coroutine] PASSTHRU}
+	    set passthru 1
+	    break
+	} on error {e eo} {
+	    Debug.error {[info coroutine] Error '$e' ($eo)}
+	    $tx reply [ServerError $R $e $eo]		;# transmit the error
+	    state_log {R rx error $socket $transaction}
+	} on ok {} {
+	    Debug.httpd {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
+	    $tx reply $R		;# finally, transmit the response
+	}
+    }
+
+    # HTTP processing is complete - turn off Rx events
+    if {[info exists timer]} {
+	catch {::after cancel $timer}; unset timer	;# turn off idle timer immediately
+    }
+    catch {Readable $socket}	;# turn off the chan event readable
+
+    if {$passthru} {
+	catch {$tx passthru}		;# inform Tx coro that we're closing
+    } else {
+	# default termination - close it all down
+	catch {chan close $socket read}	;# close the socket read side
+	catch {$tx closing}		;# inform Tx coro that we're closing
+	state_log {R rx closed $socket $transaction $reason}
+	if {[info exists ondisconnect]} {
+	    Debug.process {[info coroutine] ondisconnect '$ondisconnect' ($R)}
+	    try {
+		{*}$ondisconnect [info coroutine] [info locals]
+	    } on error {e eo} {
+		Debug.error {ondisconnect '$e' ($eo)}
 	    }
 	}
-    } trap HTTP {e eo} {
-	state_log {R rx http $socket $transaction}
-	Debug.httpd {[info coroutine] Httpd $e}
-    } trap EOF {e eo} {
-	Debug.httpd {[info coroutine] EOF waiting for request}
-    } trap TIMEOUT {e eo} {
-	if {[dict get $eo -errorcode] eq ""} {
-	    state_log {R rx inactive $socket $transaction}
-	    Debug.httpd {[info coroutine] Inactive $e}
-	} else {
-	    state_log {R rx timeout $socket $transaction}
-	    Debug.httpd {[info coroutine] Httpd $e}
-	}
-    } trap WEBSOCKET {r eo} {
-	#websocket $r
-	Debug.error {[info coroutine] Error WebSocket caught in wrong place}
-    } trap PASSTHRU {} {
-	# the process has handed off our socket to another process
-	# we have nothing to do but wait
-	set passthru 1
-	Debug.httpd {[info coroutine] PASSTHRU}
-    } on error {e eo} {
-	state_log {R rx error $socket $transaction}
-	Debug.error {[info coroutine] Rx $socket ERROR '$e' ($eo)}
-    } on return {e eo} {
-	# this happens if something tailcalls out of the coro (?)
-	#Debug.error {Rx $socket RETURN '$e' ($eo)}
-    } on continue {e eo} {
-	Debug.error {[info coroutine] Rx $socket CONTINUE '$e' ($eo)}
-    } on break {e eo} {
-	Debug.error {[info coroutine] Rx $socket BREAK '$e' ($eo)}
-    } on ok {r} {
-	# this happens on normal return
- 
-	if {[catch {chan eof $socket} eof] || $eof} {
-	    set reason "EOF on socket"
-	} elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {
-	    set reason "No Pending i/o [chan pending input $socket] == -1 || [chan pending output $socket] == -1"
-	} elseif {[dict exists $R connection] && [string tolower [dict get $R connection]] eq "close"} {
-	    set reason "Client requested close"
-	} {
-	    set reason unknown
-	}
-	
-	state_log {R rx closed $socket $transaction $reason}
-	Debug.httpd {[info coroutine] Normal termination: $reason}
-    } finally {
-	if {[info exists timer]} {
-	    catch {::after cancel $timer}; unset timer
-	}
-	
-	Debug.listener {[info coroutine] Rx DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1 || headers [llength $headers]}
-	
-	if {!$passthru} {
-	    catch {Readable $socket}	;# turn off the chan event readable
-	    catch {chan close $socket read}	;# close the socket read side
-	    catch {$tx closing}		;# inform Tx coro that we're closing
-	} else {
-	    catch {$tx passthru}		;# inform Tx coro that we're closing
-	}
+    }
 
-	state_log {"" rx closed $socket $transaction}
+    Debug.httpd {[info coroutine] Termination: 	[if {[catch {chan eof $socket} eof] || $eof} {
+	set reason "EOF on socket"
+    } elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {
+	set reason "No Pending i/o [chan pending input $socket] == -1 || [chan pending output $socket] == -1"
+    } elseif {[dict exists $R connection] && [string tolower [dict get $R connection]] eq "close"} {
+	set reason "Client requested close"
+    } {
+	set reason unknown
+    }]
     }
-    
-    if {[info exists ondisconnect]} {
-	{*}$ondisconnect [info coroutine] [info locals]
-    }
+
+    Debug.listener {[info coroutine] Rx DONE $socket [chan eof $socket] || [chan pending input $socket] == -1 || [chan pending output $socket] == -1 || headers [llength $headers]}
 }
 
 # load required H components

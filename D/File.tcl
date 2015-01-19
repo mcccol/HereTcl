@@ -123,7 +123,10 @@ oo::class create File {
 	Debug.file {constructing File with ($args)}
 	#variable expires 0	;# add an expiry to each response
 	variable crealm ""	;# optionally make files 'public'
-
+	if {[llength $args]%2} {
+	    variable root [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	}
 	variable {*}$args	;# allow .ini file to modify defaults
     }
 }

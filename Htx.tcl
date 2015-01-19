@@ -455,7 +455,7 @@ proc TxSend {} {
     TxLine $socket {*}$rline
     Debug.httpd {[info coroutine] '[lindex $rline 0]' response to '[dict get? $reply -Header full]'}
 
-    if {$code == 204} {
+    if {$code in {204}} {
 	# declared contentless by application
 	TxHeaders $socket $reply	;# emit $reply's headers and we're done
 	return
@@ -530,7 +530,7 @@ proc TxSend {} {
 	    }
 
 	    dict set reply -tx [info coroutine]
-	} elseif {$code in {200 201 202 203 204 205 206}} {
+	} elseif {$code in {200 201 202 203 204 205 206 101}} {
 	    # no -content, no -process ... reply is contentless
 	    Debug.httpdtx {[info coroutine] Format: contentless - response empty - no content in reply ($reply)}
 	    set code 204
@@ -590,10 +590,10 @@ proc Tx {args} {
     set pending {}	;# dict of requests pending responses
     set sent 0		;# how many contiguous packets have we sent?
     set close ""	;# set if we're required to close
-    set continue 0	;# no 100-continue pending
+    set continue 0	;# no '100-continue' pending
     set trx 0
-    set ns [namespace current]
-    set passthru 0
+    set passthru 0	;# when Tx exits, leave the socket open
+    set websocket 0	;# this Tx is connected to an upgraded HTTP socket
 
     Debug.listener {[info coroutine] start Tx}
     try {
@@ -696,8 +696,15 @@ proc Tx {args} {
 		    # FIXME: what if we get a received $trx indication out of sequence?
 		}
 
+		websocket - 
 		reply {
 		    # queue a response for sending - this is called by Rx or its progeny
+		    if {$op eq "websocket"} {
+			# Rx is mutating to websocket
+			set websocket 1			;# when Tx is empty, shut it down
+			append close "Rx websocket"	;# Tx should close too
+		    }
+
 		    set r [lindex $rest 0]		;# reply dict
 		    state_log {r tx $op $socket $trx $sent [llength $pending]}
 		    Debug.httpdtx {[info coroutine] Tx received reply ($r)}
@@ -725,12 +732,6 @@ proc Tx {args} {
 		    # Rx indicates it's closing
 		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
 		    append close "Rx dying"		;# Tx should close too
-		}
-
-		websocket {
-		    # Rx indicates it's processing websocket
-		    set passthru 1
-		    append close "Rx websocket"		;# Tx should close too
 		}
 
 		passthru {
@@ -775,10 +776,12 @@ proc Tx {args} {
 		TxSend	;# process the rq - send it
 	    }
 
+	    Debug.httpdtx {[info coroutine] Tx idle [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
+
 	    # close up if we're required to
 	    if {$close ne ""
 		&& ![dict size $pending]
-		&& [chan pending input $socket] == -1} {
+		&& ($websocket || [chan pending input $socket] == -1)} {
 		# we have nothing pending to send and reader is gone
 		break	;# we're done
 	    }
@@ -800,10 +803,14 @@ proc Tx {args} {
 	Debug.httpdtx {[info coroutine] Tx close $socket}
 
 	if {[info exists gzipper]} {
-	    $gzipper close	;# delete stream
+	    catch {$gzipper close}	;# delete stream
 	}
 
-	if {!$passthru} {
+	if {$websocket} {
+	    # Tx is empty, and closing.
+	    # Indicate this to the Rx coro, which is now a websocket server
+	    after 0 [list $rx WEBSOCKET]
+	} elseif {!$passthru} {
 	    catch {chan close $socket write}
 	    state_log {"" tx closed $socket $trx $sent [llength $pending]}
 	}

@@ -23,12 +23,14 @@ Debug off file
 Debug off direct
 Debug off process
 
-Debug off httpd
+Debug on httpd
+Debug on process
 Debug on websocket
+Debug on direct
 Debug off listener
 Debug off httpdlow
-Debug off httpdtx
-Debug off httpdtxlow
+Debug on httpdtx
+Debug on httpdtxlow
 Debug off entity
 Debug off cache
 Debug off cookies
@@ -41,9 +43,9 @@ if {[file exists [file join $::home .hrc]]} {
 package require Direct	;# provides Direct domain - namespace/TclOO command access via URL
 package require File	;# provides File domain - deliver content of file system via URL
 package require H	;# provides the H HTTP server itself
-package require HWebSocket
 
 Debug on error		;# we always want to see errors
+Debug on httpdbad
 
 # Create some File domains - these are invoked by the dispatcher below
 # Each of these is an object which interprets requests over the file-system
@@ -63,7 +65,7 @@ variable toplevel {<html>
 
     <p><a href='h/moop'>This link</a> shows you the default error you get if there's something wrong.</p>
     <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
-    <p><a href='echo'>This link</a> is a simple test of WebSocket support - it doesn't do much yet.</p>
+    <p><a href='echo'>This link</a> is a simple test of WebSocket support - it is currently broken - I'm doing some rework.</p>
     <p><a href='redir'>This link</a> is a redirection test.</p>
 
     <p>Here are the fossil repositories containing this instance.</p>
@@ -82,7 +84,7 @@ variable toplevel {<html>
 
 # websocket test from https://www.websocket.org/echo.html
 variable echojs {
-    var wsUri = "ws://$host:$port/echo";
+    var wsUri = "ws://$host:$port/echows";
     var output;
 
     function init() {
@@ -113,6 +115,7 @@ variable echojs {
     }
 
     function onMessage(evt) {
+	console.log("ws response: %o", evt.data);
 	writeToScreen('<span style="color: blue;">RESPONSE: ' + evt.data+'</span>'); websocket.close();
     }
 
@@ -149,6 +152,38 @@ Direct create dispatcher {
     }
     method /user {r} {
 	return [user do $r]
+    }
+
+    method /echows {opcode args} {
+	puts stderr "/echows $opcode ($args)"
+	switch -- $opcode {
+	    connect {
+		# we have received an Upgrade Websocket attempt.
+		# Details are in $r, which is a normal HTTP request dict.
+		# We have two choices - either error, in which case the connection fails
+		# or we just return $r to establish the connection and activate the websocket processing
+		# it is open to us to modify $r, which can modify the websocket handshake.
+		# 
+		# By default, subsequent WS events will come back to this command,
+		# to change the ws process command: [dict set r -ws $cmdprefix]
+		lassign $args r
+		return $r
+	    }
+
+	    text {
+		set rest [lassign $args message]
+		::H::ws send [dict get $message payload]
+	    }
+
+	    binary {
+		set rest [lassign $args message]
+		::H::ws send [dict get $message payload] 1
+	    }
+
+	    close -
+	    default {
+	    }
+	}
     }
 
     # echo - use websockets to echo stuff back and forth between client and server
@@ -245,8 +280,8 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 
 # start the H server's listener
 set largs {}
-lappend largs rxprocess ::Identity	;# H will not pre-process requests (permits passthru)
 lappend largs dispatch {dispatcher do}	;# H will dispatch requests to $dispatch for processing
+lappend largs wsprocess {dispatcher ws}	;# H will dispatch websocket upgrades to $wsprocess for processing
 lappend largs tls {} 
 #lappend largs tls [list -require 0 -certfile server.crt -keyfile server.key -cadir $home]	;# for TLS - certs in $home
 set ::listener [H listen {*}$largs $::port]
