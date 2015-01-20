@@ -196,7 +196,7 @@ namespace eval ws {
 		    } else {
 			unset incoming(mask)
 		    }
-		    Debug.websocket {[info coroutine] WebSocket read_frame decoding $r1 [binary encode hex $stream]: [array get incoming]}
+		    Debug.websocket {[info coroutine] WebSocket read_frame decoded $r1 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		paylen16 {
@@ -213,6 +213,7 @@ namespace eval ws {
 			set incoming(state) payload
 			unset incoming(mask)
 		    }
+		    Debug.websocket {[info coroutine] WebSocket read_frame paylen16 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		paylen64 {
@@ -229,6 +230,7 @@ namespace eval ws {
 			set incoming(state) payload
 			unset incoming(mask)
 		    }
+		    Debug.websocket {[info coroutine] WebSocket read_frame paylen64 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		mask {
@@ -237,7 +239,9 @@ namespace eval ws {
 
 		    set incoming(req) 0
 		    set incoming(state) payload
+		    Debug.websocket {[info coroutine] WebSocket read_frame mask [binary encode hex $stream]: [array get incoming]}
 		}
+
 		payload {
 		    break
 		}
@@ -276,8 +280,9 @@ namespace eval ws {
 		frame {
 		    # reading the frame
 		    set frame [read_frame $socket]
+
 		    if {[dict size $frame]} {
-			
+			# valid frame
 			if {[dict get $frame len]} {
 			    Readable $socket [info coroutine] payload	;# move to payload reading state
 			    dict set frame req [dict get $frame len]
@@ -305,6 +310,7 @@ namespace eval ws {
 			if {[dict exists $frame mask]} {
 			    # get mask bytes
 			    set mask [dict get $frame mask]
+			    Debug.websocket {[info coroutine] WebSocket payload mask $mask ($frame)}
 			    set i -1
 			    
 			    binary scan $payload cu* payload
@@ -312,10 +318,14 @@ namespace eval ws {
 				set i [expr {($i+1) % 4}]
 				expr {$p ^ [lindex $mask $i]}
 			    }]]
+			    Debug.websocket {[info coroutine] WebSocket payload [binary encode hex $payload] '$payload' ($frame)}
+			} else {
+			    Debug.websocket {[info coroutine] WebSocket payload no mask ($frame)}
 			}
 
 			Readable $socket [info coroutine] frame
 			process_frame $frame $payload	;# process received frame
+			unset payload
 		    }
 		}
 

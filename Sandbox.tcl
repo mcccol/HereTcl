@@ -29,8 +29,8 @@ Debug on websocket
 Debug on direct
 Debug off listener
 Debug off httpdlow
-Debug on httpdtx
-Debug on httpdtxlow
+Debug off httpdtx
+Debug off httpdtxlow
 Debug off entity
 Debug off cache
 Debug off cookies
@@ -108,6 +108,8 @@ variable echojs {
     function onOpen(evt) {
 	writeToScreen("CONNECTED");
 	doSend("WebSocket test\n");
+	writeToScreen("CONNECTED");
+	doSend("WebSocket test\n");
     }
 
     function onClose(evt) {
@@ -116,7 +118,8 @@ variable echojs {
 
     function onMessage(evt) {
 	console.log("ws response: %o", evt.data);
-	writeToScreen('<span style="color: blue;">RESPONSE: ' + evt.data+'</span>'); websocket.close();
+	writeToScreen('<span style="color: blue;">RESPONSE: ' + evt.data+'</span>');
+	//websocket.close();
     }
 
     function onError(evt) {
