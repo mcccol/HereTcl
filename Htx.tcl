@@ -5,7 +5,7 @@ variable buffering_size	1048576		;# how many bytes to read/send from files
 variable chunksize	1024		;# how big a chunk to send per chunk
 
 variable tx_defaults [defaults {
-    server_id "HereTcl [package present H]"
+    server_id "HereTxcl [package present H]"
 }]
 
 # log - common log format
@@ -276,7 +276,7 @@ proc TxHeaders {socket reply} {
 	    }
 	}
 	if {[string index $n 0] eq "-"} continue
-	Debug.httpdtxlow {[info coroutine] Tx Header $n: $v}
+	Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header $n: $v}
 	chan puts -nonewline $socket "$n: $v\x0d\x0a"
     }
 
@@ -356,7 +356,55 @@ proc TxFile {fd args} {
 proc TxFileName {name args} {
     set fd [open $name r]
     chan configure $fd -encoding binary -translation binary
-    return [H TxFile $fd {*}$args]
+    tailcall TxFile $fd {*}$args
+}
+
+# TxFileCopyDone - called on completion of TxFileCopy
+proc TxFileCopyDone {r fd size {err ""}} {
+    if {![dict exists $r -file_keep] || ![dict get $r -file_keep]} {
+	catch {close $fd}
+    }
+
+    if {$err ne ""} {
+	Debug.error {[info coroutine] TxFileCopy failed '$err'}
+    } else {
+	Debug.httpd {[info coroutine] TxFileCopy succeeded $size bytes}
+    }
+
+    [dict get $r -rx] UNPAUSE [info coroutine] 	;# unpause the Rx coro - it should currently be idle
+    after 0 [list [dict get $r -tx] complete]	;# signal Tx is good to resume
+}
+
+# TxFileCopy - utility function to [chan copy] an open file
+proc TxFileCopy {fd args} {
+    Debug.httpdtx {[info coroutine] TxFileCopy $fd $args}
+    lassign [lreverse $args] r done
+    if {$done eq ""} {
+	set done [namespace current]::TxFileCopyDone
+    }
+
+    after idle [list ::apply {{r done fd size} {
+	[dict get $r -rx] PAUSE [info coroutine] 	;# pause the Rx coro, to permit [chan copy] it must be quiescent
+	
+	try {
+	    chan copy $fd [dict get $r -socket] -size $size -command [list {*}$done $r $fd]
+	} on error {e eo} {
+	    [dict get $r -rx] UNPAUSE [info coroutine] 	;# unpause the Rx coro
+	    return -code error -options $eo $e		;# propagate error to caller
+	} on ok {e eo} {
+	    Debug.httpd {[info coroutine] TxFileCopy started for $size bytes, ending with '$done'}
+	}
+    }} $r $done $fd [dict get $r -reply content-length]]
+
+    TxHeaders [dict get $r -socket] [dict get $r -reply]	;# emit $reply's headers
+    return $r
+}
+
+# TxNameFileCopy - utility function to [chan copy] an open file
+proc TxNameFileCopy {name args} {
+    set fd [open $name r]
+    chan configure $fd -encoding binary -translation binary
+    tailcall TxFileCopy $fd {*}$args
 }
 
 # TxSend - process a single reply
@@ -408,7 +456,7 @@ proc TxSend {} {
 	}
 
 	catch {dict unset reply transfer-encoding}	;# default is not chunked
-	catch {dict unset reply content-encoding}	;# default is not gzipped
+	#catch {dict unset reply content-encoding}	;# default is not gzipped
 
 	if {[dict exists $reply content-type]} {
 	    set ct [string tolower [dict get $reply content-type]]
@@ -451,11 +499,12 @@ proc TxSend {} {
     corovar server_id
     set rline [list "HTTP/1.1 $code $errmsg" "date: [Now]" "server: $server_id"]
     TxLine $socket {*}$rline
-    Debug.httpd {[info coroutine] '[lindex $rline 0]' response to '[dict get? $reply -Header full]'}
+    Debug.httpd {[info coroutine]/[dict get $reply -transaction] '[lindex $rline 0]' response to '[dict get? $reply -Header full]'}
 
     if {$code in {204}} {
 	# declared contentless by application
 	TxHeaders $socket $reply	;# emit $reply's headers and we're done
+	incr sent
 	return
     }
 
@@ -482,14 +531,14 @@ proc TxSend {} {
 		if {[string length $gzip] < [string length [dict get $reply -content]]} {
 		    dict set reply -content $gzip	;# content becomes gzipped content
 		    dict set reply content-encoding gzip
-		    Debug.httpdtx {[info coroutine] Format: zipping ($reply) - [string length [dict get $reply -content]] bytes}
+		    Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: zipping ($reply) - [string length [dict get $reply -content]] bytes}
 		} else {
 		    # don't send gzipped if it is larger than original
 		    dict unset reply content-encoding
-		    Debug.httpdtx {[info coroutine] Format: Not zipping - pointless ($reply)}
+		    Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Not zipping - pointless ($reply)}
 		}
 	    } else {
-		Debug.httpdtx {[info coroutine] Format: Not zipping - not permitted ($reply)}
+		Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Not zipping - not permitted ($reply)}
 	    }
 
 	    dict set reply content-length [string length [dict get $reply -content]] ;# set correct content-length
@@ -497,11 +546,11 @@ proc TxSend {} {
 	    # we have an asynchronous content generator, start it up
 	    # this will continue to block new responses until $reply is unset
 
-	    dict set reply transfer-encoding chunked	;# it has to be sent chunked
-	    Debug.httpdtx {[info coroutine] Format: Reply must be chunked ($reply)}
+	    # dict set reply transfer-encoding chunked	;# it has to be sent chunked - this is false, it *may* be chunked
+	    # Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Reply must be chunked ($reply)}
 
 	    # content-encoding requested - set up content-encoding infrastructure
-	    Debug.httpdtxlow {[info coroutine] TxSend -process content-encoding [dict get? $reply content-encoding]}
+	    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxSend -process content-encoding [dict get? $reply content-encoding]}
 	    switch -- [dict get? $reply content-encoding] {
 		gzip {
 		    corovar gzipper	;# this is the command which gzips a stream
@@ -516,23 +565,23 @@ proc TxSend {} {
 		    set gzheader [list crc 0 time [clock seconds] type [expr {[string match text/* [dict get? $reply content-type]]?"text":"binary"}]]
 		    set gzheader [dict merge $gzheader [dict get? $reply -gzheader]]
 		    set gzipper [zlib stream gzip -header $gzheader]
-		    Debug.httpdtxlow {[info coroutine] TxSend - content encoding gzip with $gzipper}
+		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxSend - content encoding gzip with $gzipper}
 		}
 
 		identity {
-		    Debug.httpdtxlow {[info coroutine] identity}
+		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] identity}
 		}
 
 		default {
 		    catch {dict unset reply content-encoding}
-		    Debug.httpdtxlow {[info coroutine] none}
+		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] none}
 		}
 	    }
 
 	    dict set reply -tx [info coroutine]	;# this is (by default) the mediator for transmitted content
 	} elseif {$code in {200 201 202 203 204 205 206 101}} {
 	    # no -content, no -process ... reply is contentless
-	    Debug.httpdtx {[info coroutine] Format: contentless - response empty - no content in reply ($reply)}
+	    Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: contentless - response empty - no content in reply ($reply)}
 	    set code 204
 	    catch {dict unset reply content-length}
 	    catch {dict unset reply content-type}
@@ -540,14 +589,15 @@ proc TxSend {} {
 	}
     }
 
+    # reply dict has been checked and processed - proceed with transmission
     if {[dict exists $rq -reply -process]} {
 	# complete -process sending, blocking Tx in the meantime
 	set rq [{*}[dict get $rq -reply -process] $rq]
 	return	;# we let the -process command handle the rest
     } else {
 	# complete -content sending, then we're done
+	corovar sent
 	dict update rq -reply reply {
-
 	    TxHeaders $socket $reply	;# emit $reply's headers
 
 	    if {[dict exists $reply -content]} {
@@ -555,15 +605,16 @@ proc TxSend {} {
 		# send literal content entire
 		chan puts -nonewline $socket [dict get $reply -content]	;# send the content in its entirety
 		
-		Debug.httpdtx {[info coroutine] Tx sent entity: [dict get $reply content-length] bytes}
+		Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Tx sent entity: [dict get $reply content-length] bytes}
 		
 		# generate a log line
 		catch {log $rq}
 		
 		# this request is no longer pending
-		corovar sent
-		Debug.httpd {[info coroutine] Tx SENT response #$sent - content: [string length [dict get? $reply -content]]bytes content-type: [dict get? $reply content-type]}
+		Debug.httpd {[info coroutine]/[dict get $reply -transaction] Tx SENT response #$sent - content: [string length [dict get? $reply -content]]bytes content-type: [dict get? $reply content-type]}
 		incr sent 	;# advance lower edge of transmission window
+	    } else {
+		incr sent
 	    }
 
 	    chan flush $socket
@@ -591,7 +642,7 @@ proc Tx {args} {
     set sent 0		;# how many contiguous packets have we sent?
     set close ""	;# set if we're required to close
     set continue 0	;# no '100-continue' pending
-    set trx 0
+    set trx 0		;# transaction number currently in play
     set passthru 0	;# when Tx exits, leave the socket open
     set websocket 0	;# this Tx is connected to an upgraded HTTP socket
 
@@ -641,7 +692,9 @@ proc Tx {args} {
 			}
 		    }
 
-		    if {[dict exists $rq -reply transfer-encoding]} {
+		    if {[dict exists $rq -reply transfer-encoding]
+			&& [dict exists $rq -reply transfer-encoding] eq "chunked"
+		    } {
 			# send some chunks
 			variable chunksize
 			while {[string length $content]} {
@@ -672,6 +725,19 @@ proc Tx {args} {
 		    }
 
 		    # generate a log line
+		    catch {log $rq}
+
+		    if {[info exists gzipper]} {
+			$gzipper close	;# done with the stream
+			unset gzipper	;# delete stream
+		    }
+
+		    unset rq	;# we've completed the asynchronous reply
+		    incr sent	;# we've sent another reply
+		}
+
+		complete {
+		    # completed a passthru-like response
 		    catch {log $rq}
 
 		    if {[info exists gzipper]} {
@@ -724,6 +790,7 @@ proc Tx {args} {
 			Debug.error {[info coroutine] Send discarded: duplicate (H $r) - sent:([dict get $pending $trx])}
 			continue	;# duplicate response - just ignore
 		    } else {
+			dict set r -reply -transaction [dict get $r -transaction]
 			dict set pending $trx $r	;# queue the pending request
 		    }
 		}

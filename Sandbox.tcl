@@ -50,6 +50,7 @@ Debug on httpdbad
 # Create some File domains - these are invoked by the dispatcher below
 # Each of these is an object which interprets requests over the file-system
 File create home root $home	;# this is the directory Sandbox is running in
+File create home_fcopy root $home fcopy 1	;# this is the directory Sandbox is running in
 File create user root [pwd]	;# this is the directory the user ran Sandbox from
 File create css root [file join $home css]
 
@@ -62,6 +63,7 @@ variable toplevel {<html>
     <p><a href="http://puretcl.com:8080">HereTcl</a> is a modern HTTP1.1 web server which is completely scripted and scriptable in Tcl.</p>
     <p>HereTcl architecture is clean and elegant, and lends itself to support of Web Applications.</p>
     <p>Here is the complete <a href='/home'>file system</a> in which this instance of HereTcl is running, right now [clock format [clock seconds]]<p>
+    <p>Here is the same <a href='/home_fcopy'>file system</a> with asynchronous file copy - I don't think the difference is hugely significant.<p>
     <p><a href='/home/Sandbox.tcl'>This file</a> is the code running this program, right now.  It has some necessary complexities.<p>
     <p><a href='/home/Minimal.tcl'>This file</a> is a much more minimal example of an HereTcl-served site.</p>
 
@@ -152,6 +154,9 @@ variable echo [subst {
 Direct create dispatcher {
     method /home {r} {
 	return [home do $r]
+    }
+    method /home_fcopy {r} {
+	return [home_fcopy do $r]
     }
     method /css {r} {
 	return [css do $r]

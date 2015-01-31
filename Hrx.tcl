@@ -189,6 +189,8 @@ proc Parse {R} {
 # RxWait - wait for some input to process
 proc RxWait {where} {
     corovar timer
+
+    # stop timer, if it exists
     if {[info exists timer]} {
 	catch {::after cancel $timer}; unset timer
     }
@@ -208,24 +210,47 @@ proc RxWait {where} {
 	}
     }
 
+    # start timer, if required
     if {$time > 0} {
-	corovar timer
 	set timer [::after [expr {$time*1000}] [info coroutine] TIMEOUT $where]
-	#puts stderr "Timer $timer [after info $timer] - [info level -1]"
     }
 
     corovar socket; Readable $socket [info coroutine]
     set rest [lassign [::yieldm $where] exception from]			;# wait for READ event
 
+    # stop timer, if it exists
     if {[info exists timer]} {
 	catch {::after cancel $timer}; unset timer
     }
 
-    if {$exception ne ""} {
+    if {$exception eq "PAUSE"} {
+	Debug.httpd {[info coroutine] PAUSEd $from $rest}
+	set paused [chan event $socket readable]	;# remember the readable event
+	Readable $socket				;# turn off readable event
+
+	# we've been PAUSEd, so now wait for a matching UNPAUSE event, then restart rx processing
+	while {1} {
+	    set rest [lassign [::yieldm PAUSE] exception from]			;# wait for some event
+	    if {$exception ne "UNPAUSE"} {
+		error "[info coroutine] received unexpected event '$exception $from $rest' while PAUSEd"
+	    } else {
+		break
+	    }
+	}
+
+	Debug.httpd {[info coroutine] UNPAUSEd $from $rest}
+
+	# restart timer, if required
+	if {$time > 0} {
+	    set timer [::after [expr {$time*1000}] [info coroutine] TIMEOUT $where]
+	}
+	Readable $socket {*}$paused			;# resume readable event
+
+    } elseif {$exception ne ""} {
 	Debug.httpd {[info coroutine] Exception '$exception' from '$from' while waiting for '$where'}
 	return -code error -errorcode [list $exception $from] "$exception from $from"
     } else {
-	return 0
+	return 0	;# we have a servicable event
     }
 }
 
@@ -712,17 +737,17 @@ proc Rx {args} {
     # put receiver into header/CRLF mode and start listening for readable events
     chan configure $socket -blocking 1
     Readable $socket [info coroutine]	;# start listening on $socket with this coro
-
+    set Rtemplate [list -socket $socket -tx $tx -rx [info coroutine] -reply {} -Header {state Initial}]
     while {![catch {chan eof $socket} eof]
 	   && !$eof
 	   && [chan pending input $socket] != -1 && [chan pending output $socket] != -1
 	   && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
        } {
 	state_log {R rx request $socket $transaction}
-	    
+
 	try {
 	    # receive and process packet
-	    set R [list -socket $socket -transaction [incr transaction] -tx $tx -reply {} -Header {state Initial}]
+	    set R $Rtemplate; dict set R -transaction [incr transaction]	;# set up initial request dict
 
 	    Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
 	    set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
@@ -771,7 +796,7 @@ proc Rx {args} {
 		# and all pending HTTP traffic has been sent.
 
 		while {1} {
-		    set rest [lassign [::yieldm] exception from]	;# wait for WEBSOCKET event
+		    set rest [lassign [::yieldm] exception from]	;# wait for WEBSOCKET event from HWS.tcl
 		    if {$exception eq "WEBSOCKET"} break
 		    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $from $rest)}
 		}

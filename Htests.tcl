@@ -1,4 +1,10 @@
 lappend ::auto_path [pwd]
+
+# source .hrc for local customisations
+if {[file exists [file join [pwd] .hrc]]} {
+    source [file join [pwd] .hrc]
+}
+
 package require H
 H::load Hproc.tcl
 

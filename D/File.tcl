@@ -28,11 +28,18 @@ oo::class create File {
 	    dict set r -reply content-type [dict get $mime $ext]
 	}
 
-	# load the file contents
-	set fd [open $path r]
-	chan configure $fd -translation binary
-	dict set r -reply -content [read $fd]
-	close $fd
+	variable fcopy
+	if {$fcopy} {
+	    dict set r -reply content-encoding identity
+	    dict set r -reply content-length [file size $path]
+	    dict set r -reply -process [list H TxNameFileCopy $path]
+	} else {
+	    # load the file contents
+	    set fd [open $path r]
+	    chan configure $fd -encoding binary -translation binary
+	    dict set r -reply -content [read $fd]
+	    close $fd
+	}
 
 	dict set r -reply -code 200
 	return $r
@@ -122,6 +129,7 @@ oo::class create File {
 	Debug.file {constructing File with ($args)}
 	#variable expires 0	;# add an expiry to each response
 	variable crealm ""	;# optionally make files 'public'
+	variable fcopy 0	;# optionally send all files with [chan copy]
 	if {[llength $args]%2} {
 	    variable root [lindex $args end]
 	    set args [lrange $args 0 end-1]
