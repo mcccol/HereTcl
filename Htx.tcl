@@ -2,10 +2,10 @@
 variable ce_encodings {gzip}		;# support these char encodings
 variable do_not_encode {image binary}	;# support these char encodings
 variable buffering_size	1048576		;# how many bytes to read/send from files
-variable chunksize	1024			;# how bug a chunk to send per chunk
+variable chunksize	1024		;# how big a chunk to send per chunk
 
 variable tx_defaults [defaults {
-    server_id "H [package present H]"
+    server_id "HereTcl [package present H]"
 }]
 
 # log - common log format
@@ -101,17 +101,6 @@ proc TxLine {socket args} {
     #close $ll
     Debug.httpdtxlow {[info coroutine] TxLine: '$args' ([fconfigure $socket])}
     # FIXME: refrain from sending too-long lines
-}
-
-# TxChunk - send a buffer in chunk mode
-proc TxChunk {buf} {
-    variable chunksize
-    while {[string length $buf]} {
-	set chunk [string range $buf 0 $chunksize-1]
-	set buf [string range $buf $chunksize end]
-	TxLine $socket [format %X [string length $chunk]] $chunk
-	Debug.httpdtxlow {[info coroutine] TxChunk sent [format %X [string length $chunk]] [binary encode hex $chunk] '$chunk'}
-    }
 }
 
 # find etag in if-none-match field
@@ -296,19 +285,28 @@ proc TxHeaders {socket reply} {
     #close $ll
 }
 
-variable read_chunks [expr {10 * 1024 * 1024}]
-proc TxReadFile {fd tx {keep 0}} {
-    variable read_chunks
-    if {[chan eof $fd]} {
-	if {!$keep} {
-	    close $fd
-	}
-	tailcall $tx send 1	;# send the data to the client
-    }
+variable read_chunks [expr {10 * 1024 * 1024}]	;# how large a file chunk to read
 
-    set data [chan read $fd $read_chunks]
-    if {$data eq ""} return
-    tailcall $tx send 0 $data	;# send the data to the client
+# TxReadFile - read and transmit a chunk of file content to the client
+# $fd - the file descriptor
+# $tx - command prefix (usually the tx coroutine)
+# $keep - keep the file descriptor after use?
+proc TxReadFile {fd tx {keep 0}} {
+    try {
+	variable read_chunks
+	if {[chan eof $fd]} {
+	    if {!$keep} {
+		close $fd
+	    }
+	    tailcall $tx send 1	;# send the data to the client
+	}
+	
+	set data [chan read $fd $read_chunks]
+	if {$data eq ""} return
+	tailcall $tx send 0 $data	;# send the data to the client
+    } on error {e eo} {
+	Debug.httptx {[info coroutine] TxReadFile '$e' ($eo)}
+    }
 }
 
 # TxFile - utility function to send a file or stream
@@ -325,13 +323,13 @@ proc TxFile {fd args} {
 	if {$position == -1} {
 	    # this file is not seekable, it's a pure stream
 	    Debug.httpdtx {[info coroutine] TxFile - Content is a pure stream - chunking}
-	    catch {dict unset reply content-length}		;# this is a pipe, not a seekable file
-	    dict set reply transfer-encoding chunked
+	    catch {dict unset reply content-length}		;# this is a stream, not a seekable file
+	    dict set reply transfer-encoding chunked		;# this stream must be sent chunked
 	} elseif {[dict exists $reply content-encoding]} {
 	    # we're going to gzip this thing, so we won't know its length
 	    Debug.httpdtx {[info coroutine] TxFile - Content is a seekable file, want GZIP - chunking}
 	    catch {dict unset reply content-length}		;# we don't know the gzipped length
-	    dict set reply transfer-encoding chunked
+	    dict set reply transfer-encoding chunked		;# this gzipped content must be sent chunked
 	} elseif {![dict exists $reply content-length]} {
 	    # not gzipping, is seekable - can/should know its length - set it
 	    Debug.httpdtx {[info coroutine] TxFile - Content is a seekable file, do not want GZIP - unknown content-length}
@@ -354,7 +352,7 @@ proc TxFile {fd args} {
     return $rq
 }
 
-# TxFileName - utility function to send a file or stream
+# TxFileName - utility function to send a named file or stream
 proc TxFileName {name args} {
     set fd [open $name r]
     chan configure $fd -encoding binary -translation binary
@@ -506,7 +504,8 @@ proc TxSend {} {
 	    Debug.httpdtxlow {[info coroutine] TxSend -process content-encoding [dict get? $reply content-encoding]}
 	    switch -- [dict get? $reply content-encoding] {
 		gzip {
-		    corovar gzipper
+		    corovar gzipper	;# this is the command which gzips a stream
+
 		    # comment - Add the given comment to the header of the gzip-format data.
 		    # crc - compute a CRC of the header? Note that if the data is to be interchanged with the gzip program, a header CRC should not be computed.
 		    # filename - The name of the file that the data to be compressed came from.
@@ -519,6 +518,7 @@ proc TxSend {} {
 		    set gzipper [zlib stream gzip -header $gzheader]
 		    Debug.httpdtxlow {[info coroutine] TxSend - content encoding gzip with $gzipper}
 		}
+
 		identity {
 		    Debug.httpdtxlow {[info coroutine] identity}
 		}
@@ -529,7 +529,7 @@ proc TxSend {} {
 		}
 	    }
 
-	    dict set reply -tx [info coroutine]
+	    dict set reply -tx [info coroutine]	;# this is (by default) the mediator for transmitted content
 	} elseif {$code in {200 201 202 203 204 205 206 101}} {
 	    # no -content, no -process ... reply is contentless
 	    Debug.httpdtx {[info coroutine] Format: contentless - response empty - no content in reply ($reply)}

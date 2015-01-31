@@ -2,7 +2,6 @@ package require TclOO
 
 package require Debug
 Debug define file
-
 Debug define caching
 
 package provide File 3.0
