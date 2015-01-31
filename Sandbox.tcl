@@ -14,7 +14,6 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     }
     lappend ::auto_path $::home [file join $pwd H]
 }
-catch {source [file join $::home .sandboxrc]}
 
 package require Debug	;# provides debugging narrative
 
@@ -59,10 +58,10 @@ variable toplevel {<html>
     <head>
     </head>
     <body>
-    <h1>H Sandbox - play around</h1> by Colin McCormack mcccol@gmail.com
-    <p>Here is the complete <a href='/home'>file system</a> in which this instance of H is running, right now [clock format [clock seconds]]<p>
+    <h1>HereTcl Sandbox - play around</h1> by Colin McCormack mcccol@gmail.com
+    <p>Here is the complete <a href='/home'>file system</a> in which this instance of HereTcl is running, right now [clock format [clock seconds]]<p>
     <p><a href='/home/Sandbox.tcl'>This file</a> is the code running this program, right now.  It has some necessary complexities.<p>
-    <p><a href='/home/Minimal.tcl'>This file</a> is a much more minimal example of an H-served site.</p>
+    <p><a href='/home/Minimal.tcl'>This file</a> is a much more minimal example of an HereTcl-served site.</p>
 
     <p><a href='h/moop'>This link</a> shows you the default error you get if there's something wrong.</p>
     <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
