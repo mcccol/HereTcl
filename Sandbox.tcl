@@ -59,6 +59,8 @@ variable toplevel {<html>
     </head>
     <body>
     <h1>HereTcl Sandbox - play around</h1> by Colin McCormack mcccol@gmail.com
+    <p><a href="http://puretcl.com:8080">HereTcl</a> is a modern HTTP1.1 web server which is completely scripted and scriptable in Tcl.
+    HereTcl architecture is clean and elegant, and lends itself to support of Web Applications.</p>
     <p>Here is the complete <a href='/home'>file system</a> in which this instance of HereTcl is running, right now [clock format [clock seconds]]<p>
     <p><a href='/home/Sandbox.tcl'>This file</a> is the code running this program, right now.  It has some necessary complexities.<p>
     <p><a href='/home/Minimal.tcl'>This file</a> is a much more minimal example of an HereTcl-served site.</p>
