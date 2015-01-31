@@ -23,10 +23,10 @@ Debug off file
 Debug off direct
 Debug off process
 
-Debug on httpd
-Debug on process
-Debug on websocket
-Debug on direct
+Debug off httpd
+Debug off process
+Debug off websocket
+Debug off direct
 Debug off listener
 Debug off httpdlow
 Debug off httpdtx
@@ -65,7 +65,7 @@ variable toplevel {<html>
 
     <p><a href='h/moop'>This link</a> shows you the default error you get if there's something wrong.</p>
     <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
-    <p><a href='echo'>This link</a> is a simple test of WebSocket support - it is currently broken - I'm doing some rework.</p>
+    <p><a href='echo'>This link</a> is a simple test of WebSocket support.</p>
     <p><a href='redir'>This link</a> is a redirection test.</p>
 
     <p>Here are the fossil repositories containing this instance.</p>
@@ -110,6 +110,7 @@ variable echojs {
 	doSend("WebSocket test\n");
 	writeToScreen("CONNECTED");
 	doSend("WebSocket test\n");
+	websocket.close();
     }
 
     function onClose(evt) {
@@ -158,7 +159,7 @@ Direct create dispatcher {
     }
 
     method /echows {opcode args} {
-	puts stderr "/echows $opcode ($args)"
+	#puts stderr "/echows $opcode ($args)"
 	switch -- $opcode {
 	    connect {
 		# we have received an Upgrade Websocket attempt.
