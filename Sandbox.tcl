@@ -14,6 +14,7 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     }
     lappend ::auto_path $::home [file join $pwd H]
 }
+catch {source [file join $::home .sandboxrc]}
 
 package require Debug	;# provides debugging narrative
 
