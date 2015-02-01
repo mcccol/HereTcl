@@ -166,7 +166,7 @@ Direct create dispatcher {
     }
 
     method /echows {opcode args} {
-	#puts stderr "/echows $opcode ($args)"
+	puts stderr "/echows $opcode ($args)"
 	switch -- $opcode {
 	    connect {
 		# we have received an Upgrade Websocket attempt.
@@ -183,15 +183,15 @@ Direct create dispatcher {
 
 	    text {
 		set rest [lassign $args message]
-		::H::ws send [dict get $message payload]
+		::H::ws Send [dict get $message payload]
 	    }
 
 	    binary {
 		set rest [lassign $args message]
-		::H::ws send [dict get $message payload] 1
+		::H::ws Send [dict get $message payload] 1
 	    }
 
-	    close -
+	    closed -
 	    default {
 	    }
 	}

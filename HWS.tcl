@@ -337,7 +337,7 @@ namespace eval ws {
     }
 
     # send data to connected websocket from anywhere (including outside the ws coro)
-    proc wssend {socket data {binary 0}} {
+    proc wsSend {socket data {binary 0}} {
 	if {$binary ne "" && $binary} {
 	    # binary content
 	    set frame [binary format c 0x82]
@@ -363,8 +363,13 @@ namespace eval ws {
     }
 
     # send data to connected websocket from within the ws coro
-    proc send {data {binary 0}} {
-	corovar socket; tailcall wssend $socket $data $binary
+    proc Send {data {binary 0}} {
+	corovar socket; tailcall wsSend $socket $data $binary
+    }
+
+    # send data to connected websocket from within the ws coro
+    proc Close {data {binary 0}} {
+	#corovar socket; tailcall wsSend $socket $data $binary
     }
 
     # accept - called from user code within Hrx coro when a websocket handshake is detected

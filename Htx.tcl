@@ -98,7 +98,7 @@ proc TxLine {socket args} {
 	chan puts -nonewline $socket ${line}\x0d\x0a
 	#chan puts -nonewline $ll ${line}\x0d\x0a
     }
-    #close $ll
+    #chan close $ll
     Debug.httpdtxlow {[info coroutine] TxLine: '$args' ([fconfigure $socket])}
     # FIXME: refrain from sending too-long lines
 }
@@ -282,7 +282,7 @@ proc TxHeaders {socket reply} {
 
     chan puts -nonewline $socket "\x0d\x0a"	;# send end-of-header
     #chan puts -nonewline $ll "\x0d\x0a"
-    #close $ll
+    #chan close $ll
 }
 
 variable read_chunks [expr {10 * 1024 * 1024}]	;# how large a file chunk to read
@@ -296,7 +296,7 @@ proc TxReadFile {fd tx {keep 0}} {
 	variable read_chunks
 	if {![catch {chan eof $socket} eof] && !$eof} {
 	    if {!$keep} {
-		close $fd
+		chan close $fd
 	    }
 	    tailcall $tx send 1	;# send the data to the client
 	}
@@ -362,7 +362,7 @@ proc TxFileName {name args} {
 # TxFileCopyDone - called on completion of TxFileCopy
 proc TxFileCopyDone {r fd size {err ""}} {
     if {![dict exists $r -file_keep] || ![dict get $r -file_keep]} {
-	catch {close $fd}
+	catch {chan close $fd}
     }
 
     if {$err ne ""} {
