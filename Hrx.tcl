@@ -417,7 +417,7 @@ proc RxEntityEOF {r} {
     Debug.entity {[info coroutine] RxEntityEOF}
 
     set entity ""
-    while {![chan eof $socket]} {
+    while {[catch {chan eof $socket} eof] && !$eof} {
 	RxWait RxEntityEOF
 	append entity [chan read $socket]	;# read in as much as is available
     }
@@ -475,7 +475,7 @@ proc RxEntitySized {r} {
 	Readable $socket [info coroutine]
 
 	# start the copy
-	while {$left && ![chan eof $socket]} {
+	while {$left && ![catch {chan eof $socket} eof] && !$eof} {
 	    set buf [read $socket $left]
 	    chan puts -nonewline $entity $buf
 	    incr left [string length $buf]
@@ -499,7 +499,7 @@ proc RxEntitySized {r} {
 	Debug.entity {[info coroutine] RxEntitySized of length $left < $todisk ==> write to memory}
 
 	set entity ""
-	while {[string length $entity] < $left && ![chan eof $socket]} {
+	while {[string length $entity] < $left && ![catch {chan eof $socket} eof] && !$eof} {
 	    RxWait RxEntitySized
 	    append entity [chan read $socket [expr {$left - [string length $entity]}]]	;# read in as much as is available
 	}

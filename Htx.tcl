@@ -294,7 +294,7 @@ variable read_chunks [expr {10 * 1024 * 1024}]	;# how large a file chunk to read
 proc TxReadFile {fd tx {keep 0}} {
     try {
 	variable read_chunks
-	if {[chan eof $fd]} {
+	if {![catch {chan eof $socket} eof] && !$eof} {
 	    if {!$keep} {
 		close $fd
 	    }

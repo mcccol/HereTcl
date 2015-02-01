@@ -152,7 +152,7 @@ namespace eval ws {
     # read_frame - read input from $socket, assembling a websocket frame.
     # upon completion, return a dict of frame fields, else return {}
     proc read_frame {socket} {
-	if {[chan eof $socket]} {return {}}
+	if {[catch {chan eof $socket} eof] || $eof} {return {}}
 
 	corovar incoming	;# container for current incoming frame
 	if {![info exists incoming(state)]} {
@@ -269,7 +269,7 @@ namespace eval ws {
 	corovar payload; set payload ""	;# this is the payload of the current frame
 	Readable $socket [info coroutine] frame
 	while {1} {
-	    if {[chan eof $socket]} return
+	    if {[catch {chan eof $socket} eof] || $eof} return
 
 	    set rest [lassign [::yieldm] op]			;# wait for event
 	    switch -- $op {
