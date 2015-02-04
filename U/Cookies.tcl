@@ -71,8 +71,8 @@ namespace eval ::Cookies {
 	}
 	
 	# add a cookie to reply
-	if {[dict exists $r -cookies]} {
-	    set cdict [dict get $r -cookies]
+	if {[dict exists $r -Header cookies]} {
+	    set cdict [dict get $r -Header cookies]
 	    set cdict [remove $cdict -name $cookie]	;# remove old cookies with this name.
 	} else {
 	    set cdict [dict create]
@@ -100,7 +100,7 @@ namespace eval ::Cookies {
 	set cdict [add $cdict -path $mount -name $cookie -value $value {*}$expiresC]
 	Debug.cookies {created new cookie ($cdict) from cookie:$cookie path:$mount}
 	
-	dict set r -cookies $cdict
+	dict set r -Header cookies $cdict
 
 	return $r
     }
@@ -140,14 +140,14 @@ namespace eval ::Cookies {
 
     # filter all expired cookies from a cookie dict stored in a record
     proc expire_record {rec} {
-	if {[dict exists $rec -cookies]} {
+	if {[dict exists $rec -Header cookies]} {
 	    # get a time value as a base for expiry calculations
 	    if {[dict exists $rec date]} {
 		set now [DateInSeconds [dict get $rec date]]
 	    } else {
 		set now [clock seconds]
 	    }
-	    dict set rec -cookies [expire [dict get $rec -cookies] $now]
+	    dict set rec -Header cookies [expire [dict get $rec -Header cookies] $now]
 	}
 	return $rec
     }
@@ -386,7 +386,7 @@ namespace eval ::Cookies {
 		set now [clock seconds]
 	    }
 	    Debug.cookies {Cookies to parse: [dict get $rsp set-cookie]}
-	    dict set rsp -cookies [parse4client [dict get $rsp set-cookie] $now]
+	    dict set rsp -Header cookies [parse4client [dict get $rsp set-cookie] $now]
 	} else {
 	    Debug.cookies {load NO cookie}
 	}
@@ -549,20 +549,10 @@ namespace eval ::Cookies {
 	return $cdict
     }
 
-    # decode cookie header into a request
-    proc 4Server {req} {
-	Debug.cookies {4Server '[dict get? $req cookie]'}
-	if {[dict exists $req -cookies]} {
-	    return $req
-	}
-	dict set req -cookies [parse4server [dict get? $req cookie]]
-	return $req
-    }
-
     # load cookies from a client's request
     proc load_client_cookies {req} {
 	if {[dict exists $rsp cookie]} {
-	    dict set req -cookies [parse4server [dict get $req cookie]]
+	    dict set req -Header cookies [parse4server [dict get $req cookie]]
 	}
 	return $req
     }
@@ -734,26 +724,26 @@ namespace eval ::Cookies {
     # Request Dict API - same as lowercased procs, but operates on
     # cookie dict within request dict,
     proc Match {r args} {
-	return [match [dict get $r -cookies] {*}$args]
+	return [match [dict get $r -Header cookies] {*}$args]
     }
     proc Clear {r args} {
-	dict set r -cookies [clear [dict get $r -cookies] {*}$args]
+	dict set r -Header cookies [clear [dict get $r -Header cookies] {*}$args]
 	return $r
     }
     proc Add {r args} {
-	dict set r -cookies [add [dict get? $r -cookies] {*}$args]
+	dict set r -Header cookies [add [dict get? $r -Header cookies] {*}$args]
 	return $r
     }
     proc Remove {r args} {
-	dict set r -cookies [remove [dict get $r -cookies] {*}$args]
+	dict set r -Header cookies [remove [dict get $r -Header cookies] {*}$args]
 	return $r
     }
     proc Modify {r args} {
-	dict set r -cookies [modify [dict get $r -cookies] {*}$args]
+	dict set r -Header cookies [modify [dict get $r -Header cookies] {*}$args]
 	return $r
     }
     proc Fetch {r args} {
-	return [fetch [dict get $r -cookies] {*}$args]
+	return [fetch [dict get $r -Header cookies] {*}$args]
     }
 
     proc Fetch? {r args} {
@@ -768,7 +758,29 @@ namespace eval ::Cookies {
     }
 
     proc FetchAll {r args} {
-	return [fetchAll [dict get $r -cookies] {*}$args]
+	return [fetchAll [dict get $r -Header cookies] {*}$args]
+    }
+
+    # decode cookie header into a request
+    proc 4Server {req} {
+	Debug.cookies {4Server '[dict get? $req cookie]'}
+	if {[dict exists $req -Header cookies]} {
+	    return $req
+	}
+
+	if {[dict exists $req -Header multiple cookie]} {
+	    set cookies [dict get $req cookie]
+	} else {
+	    set cookies [list [dict get $req cookie]]
+	}
+
+	set cdict {}
+	foreach cookie $cookies {
+	    set cdict [dict merge $cdict [parse4server [dict get? $req cookie]]]
+	}
+	dict set req -Header cookies $cdict
+
+	return $req
     }
 
     namespace export -clear *

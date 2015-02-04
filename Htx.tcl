@@ -277,7 +277,13 @@ proc TxHeaders {socket reply} {
 	}
 	if {[string index $n 0] eq "-"} continue
 	Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header $n: $v}
-	chan puts -nonewline $socket "$n: $v\x0d\x0a"
+	if {[dict exists $reply -Header multiple] && $n in [dict get $reply -Header multiple]} {
+	    foreach v1 $v {
+		chan puts -nonewline $socket "$n: $v1\x0d\x0a"
+	    }
+	} else {
+	    chan puts -nonewline $socket "$n: $v\x0d\x0a"
+	}
     }
 
     chan puts -nonewline $socket "\x0d\x0a"	;# send end-of-header

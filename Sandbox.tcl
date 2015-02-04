@@ -88,7 +88,7 @@ variable toplevel {<html>
 
 # websocket test from https://www.websocket.org/echo.html
 variable echojs {
-    var wsUri = "ws://$host:$port/echows";
+    var wsUri = "ws://$host:$port/$url";
     var output;
 
     function init() {
@@ -184,12 +184,15 @@ Direct create dispatcher {
 	    text {
 		set rest [lassign $args message]
 		::H::ws Send [dict get $message payload]
+		::H::ws Ping
 	    }
 
 	    binary {
 		set rest [lassign $args message]
 		::H::ws Send [dict get $message payload] 1
 	    }
+
+	    pong {}
 
 	    closed -
 	    default {
@@ -201,6 +204,30 @@ Direct create dispatcher {
     method /echo {r} {
 	set host [dict get $r -Url host]
 	set port [dict get $r -Url port]
+	set url echows
+	return [H Ok $r content-type text/html [subst -nobackslashes $::echo]]
+    }
+
+    method /echoc {opcode args} {
+	puts stderr "/echoc $opcode ($args)"
+	switch -- $opcode {
+	    connect {
+		lassign $args r
+		set r [::H::ws Chan $r]
+		return $r
+	    }
+
+	    default {
+		error "/echoc got a message $opcode ($args)"
+	    }
+	}
+    }
+
+    # echochan - use websockets to echo stuff back and forth between client and server
+    method /echochan {r} {
+	set host [dict get $r -Url host]
+	set port [dict get $r -Url port]
+	set url echoc
 	return [H Ok $r content-type text/html [subst -nobackslashes $::echo]]
     }
 

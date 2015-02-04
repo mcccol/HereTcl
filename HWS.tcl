@@ -336,8 +336,23 @@ namespace eval ws {
 	}
     }
 
+    # data - return length + data
+    proc data {data} {
+	set len [string length $data]
+
+	if {$len < 126} {
+	    set frame [binary format c $len]
+	} elseif {$len < 65536} {
+	    set frame [binary format cS 126 $len]
+	} else {
+	    set frame [binary format cW 127 $len]
+	}
+	append frame $data
+	return $frame
+    }
+
     # send data to connected websocket from anywhere (including outside the ws coro)
-    proc wsSend {socket data {binary 0}} {
+    proc wsSend {socket {data ""} {binary 0}} {
 	if {$binary ne "" && $binary} {
 	    # binary content
 	    set frame [binary format c 0x82]
@@ -347,29 +362,42 @@ namespace eval ws {
 	    set data [encoding convertto utf-8 $data]
 	}
 
-	set len [string length $data]
+	puts -nonewline $socket $frame[data $data]; chan flush $socket
+    }
 
-	if {$len < 126} {
-	    append frame [binary format c $len]
-	} elseif {$len < 65536} {
-	    append frame [binary format cS 126 $len]
-	} else {
-	    set ll 127
-	    append frame [binary format cW 127 $len]
-	}
-	append frame $data
+    # close connected websocket from anywhere (including outside the ws coro)
+    proc wsClose {socket {data ""}} {
+	puts -nonewline $socket [binary format c* 0x88][data $data]; chan flush $socket
+    }
 
-	puts -nonewline $socket $frame
+    # ping connected websocket from anywhere (including outside the ws coro)
+    proc wsPing {socket {data ""}} {
+	puts -nonewline $socket [binary format c* 0x89][data $data]; chan flush $socket
+    }
+
+    # pong connected websocket from anywhere (including outside the ws coro)
+    proc wsPong {socket {data ""}} {
+	puts -nonewline $socket [binary format c* 0x8A][data $data]; chan flush $socket
+    }
+
+    # close connected websocket
+    proc Close {} {
+	corovar socket; tailcall wsClose $socket
+    }
+
+    # ping connected websocket
+    proc Ping {{data ""}} {
+	corovar socket; tailcall wsPing $socket $data
+    }
+
+    # pong connected websocket
+    proc Pong {{data ""}} {
+	corovar socket; tailcall wsPong $socket $data
     }
 
     # send data to connected websocket from within the ws coro
-    proc Send {data {binary 0}} {
+    proc Send {{data ""} {binary 0}} {
 	corovar socket; tailcall wsSend $socket $data $binary
-    }
-
-    # send data to connected websocket from within the ws coro
-    proc Close {data {binary 0}} {
-	#corovar socket; tailcall wsSend $socket $data $binary
     }
 
     # accept - called from user code within Hrx coro when a websocket handshake is detected
@@ -432,6 +460,60 @@ namespace eval ws {
 	    dict set rsp sec-websocket-accept [binary encode base64 [sha1::sha1 -bin $sec]]
 	}
 	return $websocket
+    }
+
+    # Chan - create a refchan for the websocket interaction
+    proc Chan {R} {
+	corovar chan; set chan [chan create {read write} [namespace code [namespace current]::Chan]]
+
+	set coro [namespace current]::$chan
+	coroutine $coro apply [list {R chan} {
+	    Debug.websocket {started coroutine [namespace current]::$chan}
+	    chan event $chan readable [list [info coroutine] read]
+	    set closing 0
+	    while {![eof $chan]} {
+		Debug.websocket {yield in coroutine [namespace current]::$chan}
+		set rest [lassign [::yieldm] opcode]
+		switch -- $opcode {
+		    read {
+			set line [gets $chan]
+			if {[eof $chan]} {
+			    # our side has closed $chan
+			    break
+			}
+
+			Debug.websocket {readable in coroutine [namespace current]::$chan got '$line'}
+			puts $chan $line
+			flush $chan
+			Debug.websocket {sent line in coroutine [namespace current]::$chan}
+		    }
+		    
+		    text -
+		    binary {
+			# incoming text or binary data
+		    }
+
+		    pong {}
+		    ping {}
+
+		    closed {
+			incr closing
+			chan close $chan; break
+		    }
+
+		    default {
+		    }
+		    
+		}
+	    }
+	    if {$closing} {
+		# other side has closed
+	    }
+	} [namespace current]] $R $chan
+	corovar socket; chan configure $chan -socket $socket -coro $coro
+	dict set R -wschan $chan
+	dict set R -ws $coro
+	return $R
     }
 
     namespace export -clear *

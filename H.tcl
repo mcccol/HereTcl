@@ -242,8 +242,20 @@ namespace eval H {
     }
 
     # NotFound - construct an HTTP NotFound response
-    proc NotFound {rq {message "<P>Not Found</P>"}} {
+    proc NotFound {rq args} {
+	if {[llength $args]%2} {
+	    set message [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	} else {
+	    set message "<P>Not Found</P>"
+	}
+
 	dict update rq -reply rsp {
+	    if {[info exists rsp]} {
+		set rsp [dict merge $rsp $args]
+	    } else {
+		set rsp $args
+	    }
 	    set rsp [NoCache $rsp]
 	    dict set rsp -content $message
 	    dict set rsp -code 404
@@ -252,7 +264,10 @@ namespace eval H {
     }
 
     # NotModified - construct an HTTP NotModified response
-    proc NotModified {rq} {
+    proc NotModified {rq args} {
+	if {[llength $args]} {
+	    dict set rq -reply [dict merge [dict get $rq -reply] $args]
+	}
 	dict update rq -reply rsp {
 	    if {[info exists rsp]} {
 		# the response MUST NOT include other entity-headers
@@ -264,6 +279,28 @@ namespace eval H {
 	    dict set rsp -code 304
 	}
 
+	return $rq
+    }
+
+    # Forbidden - construct an HTTP Forbidden response
+    proc Forbidden {rq args} {
+	if {[llength $args]%2} {
+	    set message [lindex $args end]
+	    set args [lrange $args 0 end-1]
+	} else {
+	    set message "<P>Forbidden</P>"
+	}
+
+	dict update rq -reply rsp {
+	    if {[info exists rsp]} {
+		set rsp [dict merge $rsp $args]
+	    } else {
+		set rsp $args
+	    }
+	    set rsp [NoCache $rsp]
+	    dict set rsp -content $message
+	    dict set rsp -code 403
+	}
 	return $rq
     }
 

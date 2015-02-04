@@ -277,7 +277,7 @@ oo::class create Direct {
 
 	Debug.direct {[self] calling websocket method $cmd [string range $argl 0 80]... [dict keys $argll]}
 	upvar #1 wsprocess wsprocess; set wsprocess [list [self] wscall $cmd]
-	dict set r -ws [list [self] wscall $cmd]		;# default to call the direct method for each WS event
+	dict set r -ws [list [self] wscall $cmd]	;# default to call the direct method for each WS event
 	return [my $cmd connect $r {*}$argl {*}$argll]	;# perform the direct call
     }
 
