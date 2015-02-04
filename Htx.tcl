@@ -5,7 +5,7 @@ variable buffering_size	1048576		;# how many bytes to read/send from files
 variable chunksize	1024		;# how big a chunk to send per chunk
 
 variable tx_defaults [defaults {
-    server_id "HereTxcl [package present H]"
+    server_id "HereTcl [package present H]"
 }]
 
 # log - common log format

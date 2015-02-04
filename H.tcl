@@ -306,7 +306,7 @@ namespace eval H {
 
     # construct an HTTP Bad response
     proc Bad {rq message {code 400} args} {
-	Debug.httpdbad {BAD: $message $code ($rq)}
+	Debug.httpdbad {BAD: $message $code ($rq) caller:'[info level -1]'}
 	if {[dict exists $rq -Header full]} {
 	    dict update rq -reply rsp {
 		if {![info exists rsp]} {
@@ -322,6 +322,7 @@ namespace eval H {
 	} else {
 	    # this isn't even HTTP - don't bother with the Tx
 	}
+
 	return -code error -errorcode [list HTTP $code] $message
     }
 
