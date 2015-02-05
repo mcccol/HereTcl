@@ -227,7 +227,7 @@ oo::class create Direct {
 	    # wait until both directions have closed
 	    catch {chan close $socket}
 	    catch {chan close $fsd}
-	    unset copydone($socket.$fsd) 1
+	    unset copydone($socket.$fsd)
 	} else {
 	    set copydone($socket.$fsd) 1
 	}
