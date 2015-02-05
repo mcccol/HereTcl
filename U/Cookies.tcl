@@ -767,6 +767,10 @@ namespace eval ::Cookies {
 	if {[dict exists $req -Header cookies]} {
 	    return $req
 	}
+	if {![dict exists $req cookie]} {
+	    dict set req -Header cookies {}
+	    return $req
+	}
 
 	if {[dict exists $req -Header multiple cookie]} {
 	    set cookies [dict get $req cookie]

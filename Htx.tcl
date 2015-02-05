@@ -268,13 +268,9 @@ proc TxHeaders {socket reply} {
     # send all HTTP fields which have relevance in response
     #set ll [open output.txt a]
     #fconfigure $ll -encoding binary -translation binary
+    set cookies ""
     foreach {n v} $reply {
-	# special case for cookies
-	if {$n eq "-set-cookies"} {
-	    foreach c $v {
-		chan puts -nonewline $socket "set-cookie: $c\x0d\x0a"
-	    }
-	}
+	if {$n eq "-set-cookies"} {set cookies $v}
 	if {[string index $n 0] eq "-"} continue
 	Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header $n: $v}
 	if {[dict exists $reply -Header multiple] && $n in [dict get $reply -Header multiple]} {
@@ -283,6 +279,13 @@ proc TxHeaders {socket reply} {
 	    }
 	} else {
 	    chan puts -nonewline $socket "$n: $v\x0d\x0a"
+	}
+    }
+    # special case for cookies
+    if {$cookies ne ""} {
+	foreach c $cookies {
+	    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header set-cookie: $c}
+	    chan puts -nonewline $socket "set-cookie: $c\x0d\x0a"
 	}
     }
 

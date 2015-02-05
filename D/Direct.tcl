@@ -222,8 +222,15 @@ oo::class create Direct {
     # copydone - end of passthru
     method copydone {coro socket sdir fsd fdir args} {
 	Debug.direct {$socket PASSTHRU DONE: $sdir $args}
-	catch {chan close $socket $sdir}
-	catch {chan close $fsd $fdir}
+	variable copydone
+	if {[info exists copydone($socket.$fsd)]} {
+	    # wait until both directions have closed
+	    catch {chan close $socket}
+	    catch {chan close $fsd}
+	    unset copydone($socket.$fsd) 1
+	} else {
+	    set copydone($socket.$fsd) 1
+	}
     }
 
     # start passthru
