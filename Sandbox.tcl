@@ -305,7 +305,7 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 		if {[info exists ::fossil_repo($fn)]} continue
 		
 		try {
-		    set opener "|fossil server --port $port --localhost --baseurl http://[info hostname]:$::port/h/$fn $f"
+		    set opener "|fossil server --port $port --localhost --baseurl http://[info hostname]:$::port/h/$fn {*}$fargs $f"
 		    set ::fossil_server($fn) [open $opener w] 
 		    set ::fossil_port($fn) $port
 
