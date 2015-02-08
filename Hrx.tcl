@@ -78,7 +78,7 @@ proc HeaderCheck {R} {
 	dict unset R connection
     }
     if {![dict exists $R -Url]} {
-	dict set R -Url {}
+	#dict set R -Url {}
     }
     set headers [split [dict get $R -Header full]]
     set uri [join [lrange $headers 1 end-1]]
@@ -756,6 +756,9 @@ proc Rx {args} {
 	    if {[info exists process]} {
 		set R [{*}$process $R]		;# mainly used to test H
 	    }
+	} on ok {} {
+	    Debug.httpd {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
+	    $tx reply $R		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
 	    state_log {R rx http $socket $transaction}
@@ -812,6 +815,11 @@ proc Rx {args} {
 		set R [ServerError $R $e $eo]
 		$tx reply $R		;# transmit the error
 	    }
+	} trap CLOSE {e eo} {
+	    # the process has completed the transaction and wants to close
+	    # we have nothing to do but wait
+	    Debug.httpd {[info coroutine] CLOSE}
+	    break
 	} trap PASSTHRU {e eo} {
 	    # the process has handed off our socket to another process
 	    # we have nothing to do but wait
@@ -822,9 +830,6 @@ proc Rx {args} {
 	    Debug.error {[info coroutine] Error '$e' ($eo)}
 	    $tx reply [ServerError $R $e $eo]		;# transmit the error
 	    state_log {R rx error $socket $transaction}
-	} on ok {} {
-	    Debug.httpd {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
-	    $tx reply $R		;# finally, transmit the response
 	}
     }
 
@@ -835,7 +840,7 @@ proc Rx {args} {
     catch {Readable $socket}	;# turn off the chan event readable
 
     if {$passthru} {
-	catch {$tx passthru}		;# inform Tx coro that we're closing
+	catch {$tx passthru}		;# inform Tx coro that Rx coro is closing, and it should too.
     } else {
 	# default termination - close it all down
 	catch {chan close $socket read}	;# close the socket read side
