@@ -290,6 +290,8 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     # open_fossil - this thing just starts up concurrent fossil servers
     # for each fossil repo found in the fossil dirs given above
     apply {{args} {
+	puts stderr "FOSSIL ARGS: $args"
+	set fargs ""
 	dict with args {}
 	# find a bunch of fossils
 	
@@ -305,7 +307,8 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 		if {[info exists ::fossil_repo($fn)]} continue
 		
 		try {
-		    set opener "|fossil server --port $port --localhost --baseurl http://[info hostname]:$::port/h/$fn {*}$fargs $f"
+		    set opener "|fossil server --port $port --localhost --baseurl http://[info hostname]:$::port/h/$fn $fargs $f 2>/tmp/$fn.err >/tmp/$fn.log"
+		    puts stderr "FOSSIL: $opener"
 		    set ::fossil_server($fn) [open $opener w] 
 		    set ::fossil_port($fn) $port
 
