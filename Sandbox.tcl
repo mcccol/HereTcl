@@ -17,24 +17,6 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 
 package require Debug	;# provides debugging narrative
 
-# we don't so much care about these other debug narratives
-Debug define query
-Debug off file
-Debug off direct
-Debug off process
-
-Debug off httpd
-Debug off process
-Debug off websocket
-Debug off direct
-Debug off listener
-Debug off httpdlow
-Debug off httpdtx
-Debug off httpdtxlow
-Debug off entity
-Debug off cache
-Debug off cookies
-
 # source .hrc for local customisations
 if {[file exists [file join $::home .hrc]]} {
     source [file join $::home .hrc]
@@ -45,7 +27,7 @@ package require File	;# provides File domain - deliver content of file system vi
 package require H	;# provides the H HTTP server itself
 
 Debug on error		;# we always want to see errors
-Debug on httpdbad
+#Debug on httpdbad
 
 # Create some File domains - these are invoked by the dispatcher below
 # Each of these is an object which interprets requests over the file-system
@@ -290,7 +272,7 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     # open_fossil - this thing just starts up concurrent fossil servers
     # for each fossil repo found in the fossil dirs given above
     apply {{args} {
-	puts stderr "FOSSIL ARGS: $args"
+	#puts stderr "FOSSIL ARGS: $args"
 	set fargs ""
 	dict with args {}
 	# find a bunch of fossils
@@ -308,7 +290,7 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 		
 		try {
 		    set opener "|fossil server --port $port --localhost --baseurl http://[info hostname]:$::port/h/$fn $fargs $f 2>/tmp/$fn.err >/tmp/$fn.log"
-		    puts stderr "FOSSIL: $opener"
+		    #puts stderr "FOSSIL: $opener"
 		    set ::fossil_server($fn) [open $opener w] 
 		    set ::fossil_port($fn) $port
 
