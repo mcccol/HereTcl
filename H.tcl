@@ -35,6 +35,7 @@ if {[catch {
     Debug define httpdtxlow
     Debug define entity
     Debug define cache
+    Debug define process
 }
 
 # define [dict get?] because it's *so* useful
