@@ -28,6 +28,7 @@ if {[catch {
 } else {
     Debug on error
     Debug define httpd
+    Debug define process
     Debug define listener
     Debug define httpdlow
     Debug define httpdbad
@@ -319,7 +320,7 @@ namespace eval H {
 		set rsp [dict merge $rsp $args]
 		set rsp [NoCache $rsp]
 	    }
-	    [dict get $rq -tx] reply $rq
+	    [dict get $rq -tx] TxReply $rq
 	} else {
 	    # this isn't even HTTP - don't bother with the Tx
 	}
@@ -367,6 +368,46 @@ namespace eval H {
 	}
 
 	return $rq
+    }
+
+    # copydone - end of passthru
+    proc copydone {coro socket sdir fsd fdir args} {
+	Debug.direct {$socket PASSTHRU DONE: $sdir $args}
+	variable copydone
+	if {[info exists copydone($socket.$fsd)]} {
+	    # wait until both directions have closed
+	    catch {chan close $socket}
+	    catch {chan close $fsd}
+	    unset copydone($socket.$fsd)
+	} else {
+	    set copydone($socket.$fsd) 1
+	}
+    }
+
+    proc corotrace {direction socket coro args} {
+	set op [lindex $args end]
+	try {
+	    variable sockets
+	    dict set sockets $socket $direction [list $coro $op]
+	    puts stderr "CORO $coro $op: $socket $direction"
+
+	    set chans [chan names]
+	    dict for {s v} $sockets {
+		if {$s ni $chans} {
+		    puts stderr "\t$s DEAD"
+		    catch {dict unset sockets $s}
+		} else {
+		    puts stderr "\t$s eof:[chan eof $s] in:[chan pending input $s] out:[chan pending output $s]"
+		}
+
+		dict for {d dv} $v {
+		    lassign $dv coro op
+		    puts stderr "\t\t$d: $coro $op"
+		}
+	    }
+	} on error {e eo} {
+	    puts stderr "CORO DONE $coro: ERROR '$e' ($eo)"
+	}
     }
 
     # Pipeline - listener passes control here, with a new socket
@@ -417,6 +458,12 @@ namespace eval H {
 	    # create a coro for rx one for tx, arrange for the socket to close respective half on termination
 	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	;# create Tx coro around H::Tx command
 	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
+
+	    # follow these coroutines
+	    corotrace output $socket $Tx start
+	    trace add command $Tx delete [list H::corotrace output $socket]
+	    corotrace input $socket $Tx start
+	    trace add command $Rx delete [list H::corotrace input $socket]
 
 	    # from this point on, the coroutines have control of the socket
 	} on error {e eo} {

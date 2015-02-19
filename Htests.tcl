@@ -107,7 +107,7 @@ after 0 {::apply {{} {
 	    test_dict $token {
 		-code 200
 		content-type text/html
-		server {H *}
+		server {HereTcl *}
 		vary accept-encoding
 		content-length 11
 	    } 
@@ -373,7 +373,7 @@ after 0 {::apply {{} {
 	set val [string trim [dict get $r -Header uri] /]
 	set result [H Ok $r content-type text/plain $val]
 	#puts stderr "TRIGGER[info coroutine]: $val - $socket -> $result"
-	[dict get $r -tx] reply $result		;# transmit the error
+	[dict get $r -tx] TxReply $result		;# transmit the error
     }}] $::port]
 
     variable port
@@ -439,7 +439,7 @@ after 0 {::apply {{} {
 	    test_dict $token {
 		-code 200
 		content-type text/html
-		server {H *}
+		server {HereTcl *}
 		vary accept-encoding
 		content-length 11
 	    }

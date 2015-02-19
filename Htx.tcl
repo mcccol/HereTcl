@@ -307,12 +307,12 @@ proc TxReadFile {fd tx {keep 0}} {
 	    if {!$keep} {
 		chan close $fd
 	    }
-	    tailcall $tx send 1	;# send the data to the client
+	    tailcall $tx TxSend 1	;# send the data to the client
 	}
 	
 	set data [chan read $fd $read_chunks]
 	if {$data eq ""} return
-	tailcall $tx send 0 $data	;# send the data to the client
+	tailcall $tx TxSend 0 $data	;# send the data to the client
     } on error {e eo} {
 	Debug.httptx {[info coroutine] TxReadFile '$e' ($eo)}
     }
@@ -381,7 +381,7 @@ proc TxFileCopyDone {r fd size {err ""}} {
     }
 
     [dict get $r -rx] UNPAUSE [info coroutine] 	;# unpause the Rx coro - it should currently be idle
-    after 0 [list [dict get $r -tx] complete]	;# signal Tx is good to resume
+    after 0 [list [dict get $r -tx] TxComplete]	;# signal Tx is good to resume
 }
 
 # TxFileCopy - utility function to [chan copy] an open file
@@ -416,12 +416,34 @@ proc TxNameFileCopy {name args} {
     tailcall TxFileCopy $fd {*}$args
 }
 
-# TxSend - process a single reply
-proc TxSend {} {
+# TxComplete - completed async or passthru
+proc TxComplete {args} {
+    # completed a passthru or async response
+    # this request is no longer pending
+    corovar rq
+    Debug.httpd {[info coroutine]/[dict get $rq -transaction] Tx Complete}
+
+    corovar gzipper
+    if {[info exists gzipper]} {
+	$gzipper close	;# done with the stream
+	unset gzipper	;# delete stream
+    }
+
+    corovar socket; chan flush $socket
+    if {[dict exists $rq -reply -flush]} {
+	corovar terminate; incr terminate
+	corovar flush; incr flush
+    }
+    unset rq	;# we've completed the asynchronous reply
+    corovar sent; incr sent	;# we've sent another reply
+}
+
+# TxTransmit - process a single reply
+proc TxTransmit {} {
     corovar rq
     corovar socket
 
-    Debug.httpdtxlow {[info coroutine] TxSend $rq}
+    Debug.httpdtx {[info coroutine] Tx sending ($rq)}
     dict update rq -reply reply {
 	# ensure the reply code is set
 	if {![dict exists $reply -code]} {
@@ -486,7 +508,7 @@ proc TxSend {} {
 		    set en [string tolower [string trim $en]]
 		    if {$en in $ce_encodings} {
 			dict set reply content-encoding $en	;# determined we want to encode/gzip
-			Debug.httpdtxlow {[info coroutine] TxSend determined Content encoding: $en}
+			Debug.httpdtxlow {[info coroutine] TxTransmit determined Content encoding: $en}
 			break
 		    }
 		}
@@ -513,8 +535,7 @@ proc TxSend {} {
     if {$code in {204}} {
 	# declared contentless by application
 	TxHeaders $socket $reply	;# emit $reply's headers and we're done
-	incr sent
-	return
+	tailcall TxComplete
     }
 
     # set up entity transmission header elements
@@ -559,7 +580,7 @@ proc TxSend {} {
 	    # Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Reply must be chunked ($reply)}
 
 	    # content-encoding requested - set up content-encoding infrastructure
-	    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxSend -process content-encoding [dict get? $reply content-encoding]}
+	    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxTransmit -process content-encoding [dict get? $reply content-encoding]}
 	    switch -- [dict get? $reply content-encoding] {
 		gzip {
 		    corovar gzipper	;# this is the command which gzips a stream
@@ -574,7 +595,7 @@ proc TxSend {} {
 		    set gzheader [list crc 0 time [clock seconds] type [expr {[string match text/* [dict get? $reply content-type]]?"text":"binary"}]]
 		    set gzheader [dict merge $gzheader [dict get? $reply -gzheader]]
 		    set gzipper [zlib stream gzip -header $gzheader]
-		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxSend - content encoding gzip with $gzipper}
+		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxTransmit - content encoding gzip with $gzipper}
 		}
 
 		identity {
@@ -602,10 +623,8 @@ proc TxSend {} {
     if {[dict exists $rq -reply -process]} {
 	# complete -process sending, blocking Tx in the meantime
 	set rq [{*}[dict get $rq -reply -process] $rq]
-	return	;# we let the -process command handle the rest
     } else {
 	# complete -content sending, then we're done
-	corovar sent
 	dict update rq -reply reply {
 	    TxHeaders $socket $reply	;# emit $reply's headers
 
@@ -613,21 +632,9 @@ proc TxSend {} {
 		# -content exists - we have the full content ready to go - just send it
 		# send literal content entire
 		chan puts -nonewline $socket [dict get $reply -content]	;# send the content in its entirety
-		
 		Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Tx sent entity: [dict get $reply content-length] bytes}
-		
-		# generate a log line
-		catch {log $rq}
-		
-		# this request is no longer pending
-		Debug.httpd {[info coroutine]/[dict get $reply -transaction] Tx SENT response #$sent - content: [string length [dict get? $reply -content]]bytes content-type: [dict get? $reply content-type]}
-		incr sent 	;# advance lower edge of transmission window
-	    } else {
-		incr sent
 	    }
-
-	    chan flush $socket
-	    unset rq	;# Tx is no longer busy
+	    tailcall TxComplete
 	}
     }
 }
@@ -637,6 +644,149 @@ if {0} {
     proc TxDead {coro s args} {
 	#set r ""; set t ""; puts stderr "Tx DEAD '$s' [catch {set r [chan pending input $s]}]/$r [catch {set t [chan pending output $s]}]/$t [llength [chan names]]"
     }
+}
+
+# TxPending - Rx has sent us an indication that it has read a new request
+# Initial reception of a request is signalled by a pend command from Rx
+# we get the -transaction, being the ordinal number of received requests
+# indicates to Tx that a request with this transaction id
+# has been received and is (as yet) unsatisfied
+proc TxPending {trx args} {
+    Debug.process {[info coroutine] Tx received indication of pending $trx}
+    corovar pending; dict set pending $trx {}	;# accept the pending response placeholder
+    # FIXME: what if we get a received $trx indication out of sequence?
+}
+
+# TxQueue - queue a response for sending - this is called by Rx or its progeny
+proc TxQueue {r args} {
+    set trx [dict get $r -transaction]	;# reply dict's transaction count should match earlier pending
+    corovar sent
+    corovar pending
+    if {$trx <= $sent} {
+	# this reply is a duplicate of an already-sent packet
+	# this could happen if a processing command has sent us
+	# multiple responses.  First one wins, fellers.
+	Debug.error {[info coroutine] Send discarded: duplicate (H $r)}
+    } elseif {[dict exists $pending $trx] && [dict size [dict get $pending $trx]]} {
+	# a duplicate response has been sent - discard this
+	# this could happen if a dispatcher sends a response,
+	# and subsequently gets an error which we try to send out
+	Debug.error {[info coroutine] Send discarded: duplicate (H $r) - sent:([dict get $pending $trx])}
+    } else {
+	corovar pending
+	dict set r -reply -transaction [dict get $r -transaction]
+	dict set pending $trx $r	;# queue the pending reply
+    }
+}
+
+# TxReply - Rx has sent us a reply
+proc TxReply {r args} {
+    Debug.httpdtx {[info coroutine] Tx received reply ($r)}
+    corovar close
+    if {$close} {
+	error "TxReply when closing '$close'"
+    }
+    tailcall TxQueue $r
+}
+
+# TxWebSocket - Rx has sent a reply which upgrades to WebSocket
+proc TxWebSocket {r args} {
+    # Rx is mutating to websocket after this queued transmission
+    # this transmission is the last HTTP response we will receive
+    dict set r -reply -mark 1			;# when Tx is empty, shut it down
+    tailcall TxQueue $r
+}
+
+# TxSend - an asynchronous transmitter is sending us data to send down the pipe
+proc TxSend {end content} {
+    # an asynchronous content generator has some content to send
+
+    # apply gzipping
+    corovar gzipper
+    if {[info exists gzipper]} {
+	if {$end} {
+	    set content [$gzipper add -finalize $content]	;# finish up the gzip
+	} else {
+	    set content [$gzipper add $content]	;# get some more gzipped content
+	}
+    }
+
+    # transmit $content
+    corovar rq
+    corovar socket
+    if {[dict exists $rq -reply transfer-encoding]
+	&& [dict exists $rq -reply transfer-encoding] eq "chunked"
+    } {
+	# transmit some $content chunks
+	variable chunksize
+	while {[string length $content]} {
+	    set chunk [string range $content 0 $chunksize-1]
+	    set content [string range $content $chunksize end]
+	    TxLine $socket [format %X [string length $chunk]] $chunk
+	    Debug.httpdtxlow {[info coroutine] TxChunk sent [format %X [string length $chunk]] [binary encode hex $chunk] '$chunk'}
+	}
+	if {$end} {
+	    TxLine $socket 0 ""	;# complete chunked transmission
+	}
+    } else {
+	# transmit some raw data
+	chan puts -nonewline $socket $content
+    }
+
+    if {$end} {
+	# the asynchronous content generator has finished
+	tailcall TxComplete	;# complete transmission
+    } else {
+	chan flush $socket
+    }
+}
+
+proc TxCancel {trx} {
+    corovar pending
+    dict unset pending $trx
+
+    corovar mark
+    if {![dict size $pending] && [llength $mark]} {
+	Debug.process {[info coroutine] Tx Send Mark ($args)}
+	after 0 {*}$mark
+	set mark {}
+    }
+}
+
+proc TxMark {args} {
+    corovar pending
+    corovar mark
+    if {[dict size $pending]} {
+	Debug.process {[info coroutine] Tx Mark ($args) - pending:($pending)}
+	set mark $args
+	return 0
+    } else {
+	Debug.process {[info coroutine] Tx Send Mark ($args)}
+	set mark {}
+	after 0 {*}$args
+	return 1
+    }
+}
+
+# TxClose - Rx indicates it's closing - Tx will close after clearing pending transmission queue
+proc TxClose {args} {
+    corovar close
+    if {[llength $args]} {
+	set close [lindex $args 0]	;# Tx might close too
+    }
+    Debug.process {[info coroutine] Tx hears Rx is CLOSING close:$close}
+}
+
+# TxTerminate - Rx indicates it's closing - Tx will close after clearing pending transmission queue
+proc TxTerminate {{t 1}} {
+    corovar terminate; set terminate $t	;# Tx might close too
+    Debug.process {[info coroutine] Tx Terminate}
+}
+
+# TxContinue - Rx indicating it needs a 100-Continue sent ASAP
+proc TxContinue {args} {
+    # 100-Continue will have to wait until Tx is not busy
+    corovar continue; incr continue	;# set continue flag
 }
 
 proc Tx {args} {
@@ -649,11 +799,11 @@ proc Tx {args} {
 
     set pending {}	;# dict of requests pending responses
     set sent 0		;# how many contiguous packets have we sent?
-    set close ""	;# set if we're required to close
+    set close 0		;# set if we're required to close
+    set terminate 0	;# set if we're required to terminate
     set continue 0	;# no '100-continue' pending
     set trx 0		;# transaction number currently in play
-    set passthru 0	;# when Tx exits, leave the socket open
-    set websocket 0	;# this Tx is connected to an upgraded HTTP socket
+    set mark {}		;# command to indicate exhausted Tx queue
 
     Debug.listener {[info coroutine] start Tx}
     try {
@@ -662,179 +812,35 @@ proc Tx {args} {
 	# wait and process and wait, process and wait.
 	# While $reply exists, we're actively processing it, so cannot
 	# start processing a new request.
+	set result {}
 	while {[chan pending output $socket] != -1} {
-
-	    if {![info exists rq]
-		&& ![dict size $pending]
-		&& [chan pending input $socket] == -1} break
-
-	    set rest [lassign [::yieldm $sent] op]	;# fetch next command
-	    Debug.httpdtx {[info coroutine] Tx yield $op ([lindex $rest 0])}
-	    switch -- $op {
-		continue {
-		    # Rx indicating it needs a 100-Continue sent
-		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
-
-		    if {![info exists rq]} {
-			# special case 100-Continue - straight out the socket
-			Debug.httpdtx {[info coroutine] Tx sending 100-Continue}
-			TxLine $socket "HTTP/1.1 100 Continue"
-			TxLine $socket ""
-			set continue 0
-		    } else {
-			# 100-Continue will have to wait until not-busy
-			incr continue	;# set continue flag
-		    }
-		}
-
-		send {
-		    # the asynchronous content generator has some content to send
-		    state_log {rq tx $op $socket $trx $sent [llength $pending]}
-		    lassign $rest eof content
-
-		    # apply gzipping
-		    if {[info exists gzipper]} {
-			if {$eof} {
-			    set content [$gzipper add -finalize $content]	;# finish up the gzip
-			} else {
-			    set content [$gzipper add $content]	;# get some more gzipped content
-			}
-		    }
-
-		    if {[dict exists $rq -reply transfer-encoding]
-			&& [dict exists $rq -reply transfer-encoding] eq "chunked"
-		    } {
-			# send some chunks
-			variable chunksize
-			while {[string length $content]} {
-			    set chunk [string range $content 0 $chunksize-1]
-			    set content [string range $content $chunksize end]
-			    TxLine $socket [format %X [string length $chunk]] $chunk
-			    Debug.httpdtxlow {[info coroutine] TxChunk sent [format %X [string length $chunk]] [binary encode hex $chunk] '$chunk'}
-			}
-			if {$eof} {
-			    TxLine $socket 0 ""
-			}
-		    } else {
-			# send some data
-			chan puts -nonewline $socket $content
-		    }
-
-		    chan flush $socket
-		    if {!$eof} continue
-
-		    # the asynchronous content generator has finished
-		    if {$continue} {
-			# special case 100-Continue - straight out the socket
-			Debug.httpd {[info coroutine] Tx sending deferred 100-Continue}
-			unset continue
-			TxLine $socket "HTTP/1.1 100 Continue"
-			TxLine $socket ""
-			chan flush $socket
-		    }
-
-		    # generate a log line
-		    catch {log $rq}
-
-		    if {[info exists gzipper]} {
-			$gzipper close	;# done with the stream
-			unset gzipper	;# delete stream
-		    }
-
-		    unset rq	;# we've completed the asynchronous reply
-		    incr sent	;# we've sent another reply
-		}
-
-		complete {
-		    # completed a passthru-like response
-		    catch {log $rq}
-
-		    if {[info exists gzipper]} {
-			$gzipper close	;# done with the stream
-			unset gzipper	;# delete stream
-		    }
-
-		    unset rq	;# we've completed the asynchronous reply
-		    incr sent	;# we've sent another reply
-		}
-
-		pending {
-		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
-
-		    # Initial reception of a request is signalled by a pend command from Rx
-		    # we get the -transaction, being the ordinal number of received requests
-		    # indicates to Tx that a request with this transaction id
-		    # has been received and is (as yet) unsatisfied
-		    set trx [lindex $rest 0]	;# request transaction number
-		    Debug.httpdtx {[info coroutine] Tx received indication of $trx reception}
-		    dict set pending $trx {}	;# accept the pending response
-		    # FIXME: what if we get a received $trx indication out of sequence?
-		}
-
-		websocket - 
-		reply {
-		    # queue a response for sending - this is called by Rx or its progeny
-		    if {$op eq "websocket"} {
-			# Rx is mutating to websocket
-			set websocket 1			;# when Tx is empty, shut it down
-			append close "Rx websocket"	;# Tx should close too
-		    }
-
-		    set r [lindex $rest 0]		;# reply dict
-		    state_log {r tx $op $socket $trx $sent [llength $pending]}
-		    Debug.httpdtx {[info coroutine] Tx received reply ($r)}
-		    set trx [dict get $r -transaction]	;# reply dict's transaction count should match earlier pending
-		    if {$trx <= $sent} {
-			# this reply is a duplicate of an already-sent packet
-			# this could happen if a processing command has sent us
-			# multiple responses.  First one wins, fellers.
-			Debug.error {[info coroutine] Send discarded: duplicate (H $r)}
-			continue
-		    } elseif {[dict exists $pending $trx]
-			      && [dict size [dict get $pending $trx]]
-			  } {
-			# a duplicate response has been sent - discard this
-			# this could happen if a dispatcher sends a response,
-			# and subsequently gets an error which we try to send out
-			Debug.error {[info coroutine] Send discarded: duplicate (H $r) - sent:([dict get $pending $trx])}
-			continue	;# duplicate response - just ignore
-		    } else {
-			dict set r -reply -transaction [dict get $r -transaction]
-			dict set pending $trx $r	;# queue the pending request
-		    }
-		}
-
-		closing {
-		    # Rx indicates it's closing
-		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
-		    append close "Rx dying"		;# Tx should close too
-		}
-
-		passthru {
-		    # Rx indicates it's closing due to passthrough
-		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
-		    set passthru 1
-		    append close "Rx passthru"		;# Tx should close too
-		}
-
-		default {
-		    state_log {"" tx $op $socket $trx $sent [llength $pending]}
-		    Debug.error {[info coroutine] Tx got '$op' op.  with ($rest)}
-		}
-	    }
+	    set cmd [::yieldm {*}$result]	;# fetch next command
+	    Debug.process {[info coroutine] busy:[info exists rq] Tx yield $cmd}
+	    set result [{*}$cmd]
 
 	    # there's a live request - go back to yield for any updates
-	    if {[info exists rq]} continue
+	    if {[info exists rq]} continue	;# Tx is busy
+
+	    if {$continue} {
+		# Tx is idle and there is a pending continue
+		Debug.httpdtx {[info coroutine] Tx sending 100-Continue}
+		TxLine $socket "HTTP/1.1 100 Continue"
+		TxLine $socket ""
+		set continue 0
+	    }
 
 	    # Tx is idle, process any pending replies
 	    # received a response - if Tx is idle, process all pending responses.
 	    # requests are stored in order of reception because of pending message,
 	    # so we process each pending request in natural key order.  Thank you dkf for that ability.
+	    Debug.process {[info coroutine] processing [dict keys $pending]}
 	    foreach next [dict keys $pending] {
-		if {[info exists rq]} break	;# stop looking when we get a rq to service
+		# consume next pending response as $rq - from this point on, we are not idle
+		set rq [dict get $pending $next]	;# we are now busy processing $reply
 
 		if {$next > $sent+1} {
 		    Debug.httpdtx {[info coroutine] Tx exhausted $next vs [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
+		    unset rq	;# resume idle state
 		    break	;# pipeline is blocked pending more replies
 		}
 
@@ -842,24 +848,31 @@ proc Tx {args} {
 		# consume the next reply from pending queue
 		if {![dict size [dict get $pending $next]]} {
 		    Debug.httpdtx {[info coroutine] Tx pipeline stalled at $next}
+		    unset rq	;# resume idle state
 		    break	;# merely a place-holder.  We must wait for the actual packet
 		}
 
-		set rq [dict get $pending $next]	;# we are now busy processing $reply
-		dict unset pending $next		;# consume pending response
-		Debug.httpdtx {[info coroutine] Tx sending ($rq)}
-
-		TxSend	;# process the rq - send it
+		dict unset pending $next	;# consume pending response
+		TxTransmit			;# process the rq and transmit it
+		if {[info exists rq]} break	;# stop looking when TxTransmit starts an async rq to service
 	    }
 
 	    Debug.httpdtx {[info coroutine] Tx idle [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
 
-	    # close up if we're required to
-	    if {$close ne ""
-		&& ![dict size $pending]
-		&& ($websocket || [chan pending input $socket] == -1)} {
-		# we have nothing pending to send and reader is gone
-		break	;# we're done
+	    # if the Tx queue is exhausted, mark it and close
+	    if {![dict size $pending]} {
+		if {[llength $mark]} {
+		    Debug.process {[info coroutine] Tx Send Delayed Mark ($args)}
+		    after 0 {*}$mark
+		    set mark {}
+		}
+		if {$close} {
+		    catch {chan close $socket write}
+		    break
+		}
+		if {$terminate} {
+		    break
+		}
 	    }
 	}
     } on error {e eo} {
@@ -880,15 +893,6 @@ proc Tx {args} {
 
 	if {[info exists gzipper]} {
 	    catch {$gzipper close}	;# delete stream
-	}
-
-	if {$websocket} {
-	    # Tx is empty, and closing.
-	    # Indicate this to the Rx coro, which is now a websocket server
-	    after 0 [list $rx WEBSOCKET]
-	} elseif {!$passthru} {
-	    catch {chan close $socket write}
-	    state_log {"" tx closed $socket $trx $sent [llength $pending]}
 	}
     }
 }
