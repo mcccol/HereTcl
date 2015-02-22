@@ -385,6 +385,7 @@ namespace eval H {
     }
 
     proc corotrace {direction socket coro args} {
+	return
 	set op [lindex $args end]
 	try {
 	    variable sockets
