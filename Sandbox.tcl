@@ -53,7 +53,7 @@ variable toplevel {<html>
     <p><a href='/home/moop'>This link</a> shows you the default error you get if there's no matching file in a file domain.</p>
     <p><a href='echo'>This link</a> is a simple test of WebSocket support.</p>
     <p><a href='redir'>This link</a> is a redirection test.</p>
-
+    <p><a href='coro/'>Here's some internal debugging</a></p>
     <p>Here are the fossil repositories containing this instance.</p>
     <ul>$fossil</ul>
 
@@ -229,6 +229,19 @@ Direct create dispatcher {
 	    </body>
 	    </html>
 	}]
+    }
+
+    method /coro {r} {
+	set extra [dict get? $r -Url extra]
+	if {$extra eq ""} {
+	    set table [H socketDump]
+	    return [H Ok $r content-type text/html <html><body>$table</body></html>]
+	} elseif {[llength [info commands $extra]]} {
+	    set table [H coroDump [dict get? $r -Url extra]]
+	    return [H Ok $r content-type text/html <html><body>$table</body></html>]
+	} else {
+	    return [H NotFound $r]
+	}
     }
 
     method / {r} {

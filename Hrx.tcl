@@ -189,23 +189,6 @@ proc Parse {R} {
     return $R
 }
 
-# RxDump - debug Rx coro
-proc RxDump {} {
-    foreach {n v} [uplevel #1 [list ::apply {{} {
-	set result {}
-	foreach n [info vars] {
-	    try {
-		dict set result $n [set $n]
-	    } on error {e eo} {
-		if {[dict get $eo -errorcode] eq "TCL READ VARNAME"} {
-		    dict set result ${n}() [array get $n]
-		}
-	    }
-	}
-	return $result
-    }}]
-}
-
 # RxWait - wait for some input to process
 proc RxWait {where} {
     corovar timer
@@ -237,9 +220,9 @@ proc RxWait {where} {
 
     corovar socket; Readable $socket [info coroutine]
     while {1} {
-	set rest [lassign [::yieldm $where] exception from]			;# wait for READ event
-	if {$exception eq "dump"} {
-	    set where [RxDump]
+	set rest [lassign [::yieldm $where] exception]			;# wait for READ event
+	if {$exception eq "coroVars"} {
+	    set where [coroVars {*}$rest]
 	} else break
     }
 
@@ -249,21 +232,22 @@ proc RxWait {where} {
     }
 
     if {$exception eq "PAUSE"} {
-	Debug.httpd {[info coroutine] PAUSEd $from $rest}
+	Debug.httpd {[info coroutine] PAUSEd $rest}
 	set paused [chan event $socket readable]	;# remember the readable event
 	Readable $socket				;# turn off readable event
 
 	# we've been PAUSEd, so now wait for a matching UNPAUSE event, then restart rx processing
+	set where PAUSE
 	while {1} {
-	    set rest [lassign [::yieldm PAUSE] exception from]			;# wait for some event
+	    set rest [lassign [::yieldm $where] exception]			;# wait for some event
 	    if {$exception ne "UNPAUSE"} {
-		error "[info coroutine] received unexpected event '$exception $from $rest' while PAUSEd"
-	    } elseif {$exception eq "dump"} {
-		set where [RxDump]
+		error "[info coroutine] received unexpected event '$exception $rest' while PAUSEd"
+	    } elseif {$exception eq "coroVars"} {
+		set where [coroVars {*}$rest]
 	    } else break
 	}
 
-	Debug.httpd {[info coroutine] UNPAUSEd $from $rest}
+	Debug.httpd {[info coroutine] UNPAUSEd $rest}
 
 	# restart timer, if required
 	if {$time > 0} {
@@ -272,8 +256,8 @@ proc RxWait {where} {
 	Readable $socket {*}$paused			;# resume readable event
 
     } elseif {$exception ne ""} {
-	Debug.httpd {[info coroutine] Exception '$exception' from '$from' while waiting for '$where'}
-	return -code error -errorcode [list $exception $from] "$exception from $from"
+	Debug.httpd {[info coroutine] Exception '$exception' from '$rest' while waiting for '$where'}
+	return -code error -errorcode [list $exception $rest] "$exception from $rest"
     } else {
 	return 0	;# we have a servicable event
     }
@@ -782,6 +766,7 @@ proc Rx {args} {
 	    }
 	} on ok {} {
 	    Debug.httpd {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
+	    lappend Urls $transaction [dict get? $R -Header full]
 	    $tx TxReply $R		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
@@ -824,14 +809,14 @@ proc Rx {args} {
 		$tx TxMark [info coroutine] WEBSOCKET	;# inform us when the tx queue is exhausted
 		# tx websocket sends us back a message when the coast is clear,
 		# and all pending HTTP traffic has been sent.
-
+		set where WEBSOCKET
 		while {1} {
-		    set rest [lassign [::yieldm] exception from]	;# wait for WEBSOCKET event from HWS.tcl
+		    set rest [lassign [::yieldm $where] exception]	;# wait for WEBSOCKET event from HWS.tcl
 		    if {$exception eq "WEBSOCKET"} break
-		    if {$exception eq "dump"} {
-			set where [RxDump]
+		    if {$exception eq "coroVars"} {
+			set where [coroVars {*}$rest]
 		    }
-		    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $from $rest)}
+		    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
 		}
 
 		# Now we know the Tx has shut down, we're free to websocket - go active
@@ -870,7 +855,7 @@ proc Rx {args} {
     if {!$passthru} {
 	# default termination - close it all down
 	catch {chan close $socket read}	;# close the socket read side
-	catch {$tx TxClose}		;# inform Tx coro that we're closing
+	catch {$tx TxClose 1}		;# inform Tx coro that we're closing
 	state_log {R rx closed $socket $transaction $reason}
 	if {[info exists ondisconnect]} {
 	    Debug.process {[info coroutine] ondisconnect '$ondisconnect' ($R)}
@@ -885,7 +870,7 @@ proc Rx {args} {
     Debug.process {[info coroutine] Termination: [if {[catch {chan eof $socket} eof] || $eof} {
 	set reason "EOF on socket"
     } elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {
-	set reason "No Pending i/o [chan pending input $socket] == -1 || [chan pending output $socket] == -1"
+	set reason "No Pending i/o eof: [chan eof $socket] in:[chan pending input $socket] out:[chan pending output $socket]"
     } elseif {[dict exists $R connection] && [string tolower [dict get $R connection]] eq "close"} {
 	set reason "Client requested close"
     } {

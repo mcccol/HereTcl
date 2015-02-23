@@ -384,30 +384,96 @@ namespace eval H {
 	}
     }
 
+    # coroVars - debug coro
+    proc coroVars {args} {
+	if {![llength $args]} {
+	    set args [uplevel #1 {info vars}]
+	}
+
+	#puts stderr "CV [info coroutine] $args"
+	foreach var [lsort $args] {
+	    lappend result {*}[::apply {{var} {
+		upvar #1 $var __XXX
+		set result {}
+		try {
+		    dict set result $var [set __XXX]
+		} on error {e eo} {
+		    if {[dict get $eo -errorcode] eq "TCL READ VARNAME"} {
+			dict set result ${var}() [array get __XXX]
+		    } else {
+			Debug.error {coroVars Error '$e' ($eo)}
+		    }
+		}
+		return $result
+	    }} $var]
+	}
+	return $result
+    }
+
+    proc coroDump {coro} {
+	if {$coro eq [info coroutine]} {
+	    set vars [coroVars]
+	} else {
+	    set vars [$coro coroVars]
+	}
+	set result {}
+	foreach {n v} $vars {
+	    lappend result <td>$n</td><td>$v</td>
+	}
+	return <table><tr>[join $result </tr>\n<tr>]</tr></table>
+    }
+
+    proc socketDump {} {
+	variable sockets
+	set chans [chan names]
+	dict for {s v} $sockets {
+	    if {$s ni $chans} {
+		lappend result "<td>$s DEAD</td>"
+	    } else {
+		lappend result "<td>$s</td><td>eof:[chan eof $s]</td><td>in:[chan pending input $s]</td><td>out:[chan pending output $s]</td>"
+	    }
+	    dict for {d dv} $v {
+		lassign $dv coro op
+		lappend result "<td><td><td>$d</td><td><a href='$coro'>$coro</a></td><td>$op</td>"
+		if {$op ne "delete"} {
+		    if {1 || $d eq "input"} {
+			if {$coro eq [info coroutine]} {
+			    set urls [lindex [coroVars Urls] 1]
+			} else {
+			    set urls [lindex [$coro coroVars Urls] 1]
+			}
+			dict for {t u} $urls {
+			    lappend result "<td></td> <td></td> <td></td> <td>$t</td> <td>$u</td>"
+			}
+		    } else {
+			foreach {n val} [$coro coroVars] {
+			    lappend result "<td></td> <td></td> <td></td> <td>$n</td> <td>$val</td>"
+			}
+		    }			
+		}
+	    }
+	}
+	return <table><tr>[join $result </tr>\n<tr>]</tr></table>
+    }
+
     proc corotrace {direction socket coro args} {
-	return
 	set op [lindex $args end]
 	try {
 	    variable sockets
 	    dict set sockets $socket $direction [list $coro $op]
-	    puts stderr "CORO $coro $op: $socket $direction"
+	    #puts stderr "CORO $coro $op: $socket $direction"
 
 	    set chans [chan names]
 	    dict for {s v} $sockets {
 		if {$s ni $chans} {
-		    puts stderr "\t$s DEAD"
+		    #puts stderr "\t$s DEAD"
 		    catch {dict unset sockets $s}
 		} else {
-		    puts stderr "\t$s eof:[chan eof $s] in:[chan pending input $s] out:[chan pending output $s]"
-		}
-
-		dict for {d dv} $v {
-		    lassign $dv coro op
-		    puts stderr "\t\t$d: $coro $op"
+		    #puts stderr "\t$s eof:[chan eof $s] in:[chan pending input $s] out:[chan pending output $s]"
 		}
 	    }
 	} on error {e eo} {
-	    puts stderr "CORO DONE $coro: ERROR '$e' ($eo)"
+	    Debug.error {CORO DONE $coro: ERROR '$e' ($eo)}
 	}
     }
 
@@ -463,7 +529,7 @@ namespace eval H {
 	    # follow these coroutines
 	    corotrace output $socket $Tx start
 	    trace add command $Tx delete [list H::corotrace output $socket]
-	    corotrace input $socket $Tx start
+	    corotrace input $socket $Rx start
 	    trace add command $Rx delete [list H::corotrace input $socket]
 
 	    # from this point on, the coroutines have control of the socket

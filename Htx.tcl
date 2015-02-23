@@ -660,6 +660,14 @@ proc TxPending {trx args} {
 # TxQueue - queue a response for sending - this is called by Rx or its progeny
 proc TxQueue {r args} {
     set trx [dict get $r -transaction]	;# reply dict's transaction count should match earlier pending
+
+    corovar Urls
+    lappend dline [dict get? $r -Header full]
+    foreach v {-code content-type content-length} {
+	lappend dline [dict get? $r -reply $v]
+    }
+    lappend Urls $trx [join $dline]
+
     corovar sent
     corovar pending
     if {$trx <= $sent} {
@@ -682,6 +690,7 @@ proc TxQueue {r args} {
 # TxReply - Rx has sent us a reply
 proc TxReply {r args} {
     Debug.httpdtx {[info coroutine] Tx received reply ($r)}
+
     corovar close
     if {$close} {
 	error "TxReply when closing '$close'"
@@ -813,8 +822,8 @@ proc Tx {args} {
 	# While $reply exists, we're actively processing it, so cannot
 	# start processing a new request.
 	set result {}
-	while {[chan pending output $socket] != -1} {
-	    set cmd [::yieldm {*}$result]	;# fetch next command
+	while {![catch {chan eof $socket} eof] && !$eof && [chan pending output $socket] != -1} {
+	    set cmd [::yieldm $result]	;# fetch next command
 	    Debug.process {[info coroutine] busy:[info exists rq] Tx yield $cmd}
 	    set result [{*}$cmd]
 
