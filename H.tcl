@@ -491,7 +491,7 @@ namespace eval H {
 	    } on error {e eo} {
 		append line " -2"
 	    }
-
+	    append line " " [dict get? [chan configure $s] -peername]
 	    lappend result <p>$line</p>
 
 	    set table {}
@@ -516,7 +516,16 @@ namespace eval H {
 		lappend result </table>
 	    }
 	}
-
+	foreach chan [chan names] {
+	    if {[string match sock* $chan] && ![dict exists $sockets $chan]} {
+		set config [chan configure $chan]
+		if {![dict exists $config -peername]} {
+		    lappend result <p>Listener $chan - [dict get? $config -sockname]</p>
+		} else {
+		    lappend result <p>ROGUE $chan - $config</p>
+		}
+	    }
+	}
 	return [join $result \n]
     }
 
