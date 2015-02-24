@@ -111,7 +111,7 @@ proc HeaderCheck {R} {
     } else {
 	# HTTP 1.0 isn't required to send a Host field
 	# but we still need host info as provided by Listener
-	dict set R -Url [dict merge [dict get $R -Url] [path $uri]]
+	dict set R -Url [dict merge [dict get? $R -Url] [path $uri]]
 	dict set R -Url host [host [dict get $R -Url]]
     }
 
@@ -722,7 +722,7 @@ proc Rx {args} {
     variable connection_count
 
     set args [dict merge $rx_defaults $args]
-    dict with args {}	;# install rx state vars
+    dict with args {}; unset args	;# install rx state vars
 
     if {![info exists dispatch]} {
 	set dispatch RxProcess
@@ -733,7 +733,7 @@ proc Rx {args} {
     }
 
     Debug.listener {[info coroutine] start Rx $args}
-    if {[dict exists $args tls] && [dict size [dict get $args tls]]} {
+    if {[info exists tls] && [dict size $tls]} {
 	#tls::handshake $socket	;# generate an error if the handshake failed - it'll be picked up below
 	Debug.listener {[info coroutine] tls::status [tls::status $socket]}
     }

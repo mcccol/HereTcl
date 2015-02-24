@@ -801,9 +801,7 @@ proc Tx {args} {
     # create corovars from $args with defaults
     variable tx_defaults
     set args [dict merge $tx_defaults $args]
-    dict with args {}
-
-    #trace add command [info coroutine] delete [namespace code [list TxDead [info coroutine] $socket]]
+    dict with args {}; unset args
 
     set pending {}	;# dict of requests pending responses
     set sent 0		;# how many contiguous packets have we sent?
