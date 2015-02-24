@@ -423,58 +423,118 @@ namespace eval H {
 	return <table><tr>[join $result </tr>\n<tr>]</tr></table>
     }
 
+    proc getCV {coro args} {
+	if {$coro eq [info coroutine]} {
+	    set result [coroVars {*}$args]
+	} else {
+	    set result [$coro coroVars {*}$args]
+	}
+	if {[llength $args] == 1} {
+	    set result [lindex $result 1]
+	}
+	return $result
+    }
+
     proc socketDump {} {
 	variable sockets
 	set chans [chan names]
 	dict for {s v} $sockets {
 	    if {$s ni $chans} {
-		lappend result "<td>$s DEAD</td>"
-	    } else {
-		lappend result "<td>$s</td><td>eof:[chan eof $s]</td><td>in:[chan pending input $s]</td><td>out:[chan pending output $s]</td>"
+		lappend result "<section>$s DEAD</section>"
+		dict unset sockets $s
+		continue
 	    }
-	    dict for {d dv} $v {
-		lassign $dv coro op
-		lappend result "<td><td><td>$d</td><td><a href='$coro'>$coro</a></td><td>$op</td>"
-		if {$op ne "delete"} {
-		    if {1 || $d eq "input"} {
-			if {$coro eq [info coroutine]} {
-			    set urls [lindex [coroVars Urls] 1]
-			} else {
-			    set urls [lindex [$coro coroVars Urls] 1]
-			}
-			dict for {t u} $urls {
-			    lappend result "<td></td> <td></td> <td></td> <td>$t</td> <td>$u</td>"
-			}
-		    } else {
-			foreach {n val} [$coro coroVars] {
-			    lappend result "<td></td> <td></td> <td></td> <td>$n</td> <td>$val</td>"
-			}
-		    }			
+	    lappend result <section>
+	    try {
+		set line "$s eof:[chan eof $s]"
+	    } on error {e eo} {
+		dict unset sockets $s
+		continue
+	    }
+
+	    catch {unset input}
+	    catch {unset output}
+	    set outD {}
+	    dict with v {}
+	    if {[info exists input]} {
+		lassign $input ic iop
+		try {
+		    set inD [getCV $ic Trace]
+		    append line " <a href='$ic'>$ic</a> "
+		} on error {e eo} {
+		    set inD {}
 		}
+	    } else {
+		set inD {}
+	    }
+	    append line " $iop"
+	    try {
+		append line " [chan pending input $s]"
+	    } on error {e eo} {
+		append line " -2"
+	    }
+
+	    if {[info exists output]} {
+		lassign $output oc oop
+		try {
+		    set outD [getCV $oc Trace]
+		    append line " <a href='$oc'>$oc</a>"
+		} on error {e eo} {
+		    set outD {}
+		}
+	    } else {
+		set outD {}
+	    }
+	    append line " $oop"
+	    try {
+		append line " [chan pending output $s]"
+	    } on error {e eo} {
+		append line " -2"
+	    }
+
+	    lappend result <p>$line</p>
+
+	    set table {}
+	    dict for {t u} $inD {
+		set line ""
+		append line <td>$t</td> <td>[lindex [split $u] 1]</td>
+		if {[dict exists $outD $t]} {
+		    append line <td>[join [dict get $outD $t] </td><td>]</td>
+		}
+		lappend table $line
+	    }
+	    if {[llength $table]} {
+		lappend result <table>
+
+		lappend result <thead>
+		lappend result <tr><th>[join {"" url code type length} </th><th>]</th></tr>
+		lappend result </thead>
+
+		lappend result <tbody>
+		lappend result <tr>[join $table </tr>\n<tr>]</tr>
+		lappend result </tbody>
+		lappend result </table>
 	    }
 	}
-	return <table><tr>[join $result </tr>\n<tr>]</tr></table>
+
+	return [join $result \n]
     }
 
-    proc corotrace {direction socket coro args} {
-	set op [lindex $args end]
-	try {
-	    variable sockets
-	    dict set sockets $socket $direction [list $coro $op]
-	    #puts stderr "CORO $coro $op: $socket $direction"
+    proc corodead {direction socket coro args} {
+	variable sockets
 
-	    set chans [chan names]
-	    dict for {s v} $sockets {
-		if {$s ni $chans} {
-		    #puts stderr "\t$s DEAD"
-		    catch {dict unset sockets $s}
-		} else {
-		    #puts stderr "\t$s eof:[chan eof $s] in:[chan pending input $s] out:[chan pending output $s]"
-		}
-	    }
-	} on error {e eo} {
-	    Debug.error {CORO DONE $coro: ERROR '$e' ($eo)}
+	if {$socket ni [chan names]} {
+	    catch {dict unset sockets $s}
+	} else {
+	    dict set sockets $socket $direction $coro DEAD
 	}
+    }
+
+    proc Trace {op} {
+	variable sockets
+	corovar socket
+	corovar direction
+	dict set sockets $socket $direction [info coroutine] $op
     }
 
     # Pipeline - listener passes control here, with a new socket
@@ -523,14 +583,15 @@ namespace eval H {
 	    set Rx ${namespace}::R::$socket
 
 	    # create a coro for rx one for tx, arrange for the socket to close respective half on termination
-	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	;# create Tx coro around H::Tx command
-	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	;# create Rx coro around H::Rx command
+	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	direction output;# create Tx coro around H::Tx command
+	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	direction input;# create Rx coro around H::Rx command
 
 	    # follow these coroutines
-	    corotrace output $socket $Tx start
-	    trace add command $Tx delete [list H::corotrace output $socket]
-	    corotrace input $socket $Rx start
-	    trace add command $Rx delete [list H::corotrace input $socket]
+	    variable sockets
+	    dict set sockets $socket output $Tx start
+	    trace add command $Tx delete [list H::corodead output $socket]
+	    dict set sockets $socket input $Rx start
+	    trace add command $Rx delete [list H::corodead input $socket]
 
 	    # from this point on, the coroutines have control of the socket
 	} on error {e eo} {

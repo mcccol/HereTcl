@@ -268,11 +268,16 @@ namespace eval ws {
 	corovar frame; set frame {}
 	corovar payload; set payload ""	;# this is the payload of the current frame
 	Readable $socket [info coroutine] frame
+	set what {}
 	while {1} {
 	    if {[catch {chan eof $socket} eof] || $eof} return
 
-	    set rest [lassign [::yieldm] op]			;# wait for event
+	    set rest [lassign [::yieldm {*}$what] op]			;# wait for event
+	    set what {}
 	    switch -- $op {
+		coroVars {
+		    set what [::H coroVars {*}$rest]
+		}
 		send {
 		    send {*}$rest	;# call the send-data command
 		}

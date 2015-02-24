@@ -279,6 +279,7 @@ proc Header {r {one 0}} {
     }
 
     while {![catch {chan eof $socket} eof] && !$eof} {
+	Trace $state
 	RxWait $state
 	set len [gets $socket line]
 	if {$len == -1} {
@@ -766,7 +767,7 @@ proc Rx {args} {
 	    }
 	} on ok {} {
 	    Debug.httpd {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
-	    lappend Urls $transaction [dict get? $R -Header full]
+	    dict set Trace $transaction [dict get? $R -Header full]
 	    $tx TxReply $R		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
@@ -807,6 +808,8 @@ proc Rx {args} {
 		}
 		$tx TxReply $R		;# transmit the websocket handshake accept
 		$tx TxMark [info coroutine] WEBSOCKET	;# inform us when the tx queue is exhausted
+		Trace WebSocket
+
 		# tx websocket sends us back a message when the coast is clear,
 		# and all pending HTTP traffic has been sent.
 		set where WEBSOCKET
@@ -832,12 +835,14 @@ proc Rx {args} {
 	    # the process has completed the transaction and wants to close
 	    # we have nothing to do but wait
 	    Debug.httpd {[info coroutine] CLOSE}
+	    Trace close
 	    break
 	} trap PASSTHRU {e eo} {
 	    # the process has handed off our socket to another process
 	    # we have nothing to do but wait
 	    Debug.httpd {[info coroutine] PASSTHRU}
 	    set passthru 1
+	    Trace passthru
 	    break
 	} on error {e eo} {
 	    Debug.error {[info coroutine] Error '$e' ($eo)}

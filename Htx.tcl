@@ -661,12 +661,11 @@ proc TxPending {trx args} {
 proc TxQueue {r args} {
     set trx [dict get $r -transaction]	;# reply dict's transaction count should match earlier pending
 
-    corovar Urls
-    lappend dline [dict get? $r -Header full]
+    corovar Trace
     foreach v {-code content-type content-length} {
 	lappend dline [dict get? $r -reply $v]
     }
-    lappend Urls $trx [join $dline]
+    dict set Trace $trx [join $dline]
 
     corovar sent
     corovar pending
