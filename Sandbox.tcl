@@ -235,10 +235,10 @@ Direct create dispatcher {
 	set extra [dict get? $r -Url extra]
 	if {$extra eq ""} {
 	    set table [H socketDump]
-	    return [H Ok $r content-type text/html <html><body>$table</body></html>]
+	    return [H NoCache [H Ok $r content-type text/html <html><body>$table</body></html>]]
 	} elseif {[llength [info commands $extra]]} {
 	    set table [H coroDump [dict get? $r -Url extra]]
-	    return [H Ok $r content-type text/html <html><body>$table</body></html>]
+	    return [H NoCache [H Ok $r content-type text/html <html><body>$table</body></html>]]
 	} else {
 	    return [H NotFound $r]
 	}
@@ -325,6 +325,9 @@ lappend largs dispatch {dispatcher do}	;# H will dispatch requests to dispatch f
 lappend largs wsprocess {dispatcher ws}	;# H will dispatch websocket upgrades to wsprocess for processing
 lappend largs tls {}			;# no TLS by default
 #lappend largs tls [list -require 0 -certfile server.crt -keyfile server.key -cadir $home]	;# for TLS - certs in $home
+#lappend largs access_log_fd stdout
+package require Logchan
+lappend largs access_log_fd [Logchan open [pwd]/access.log daily 1]
 
 set ::listener [H listen {*}$largs $::port]	;# create a listener on $::port
 puts stderr "H listening on port $::port"

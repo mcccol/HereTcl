@@ -21,3 +21,4 @@ package ifneeded parsetcl 0.2 [list source [file join $dir parsetcl.tcl]]
 
 package ifneeded Session 4.0 [list source [file join $dir Session.tcl]]
 package ifneeded Config 1.0 [list source [file join $dir Config.tcl]]
+package ifneeded Logchan 1.0 [list source [file join $dir Logchan.tcl]]

@@ -14,7 +14,6 @@ set ::tcl::unsupported::noReverseDNS 1	;# turn off reverse DNS
 
 # event logging hook - default a Noop
 proc ::Noop {args} {}
-interp alias {} ::H::state_log {} ::Noop
 proc ::Identity {x} {return $x}
 
 # try to load the Debug module, for nice formatted debug narrative
@@ -58,7 +57,7 @@ interp alias {} ::yieldm {} ::yieldto return -level 0	;# coroutine yielder
 namespace eval H {
     variable default_port 80		;# default listener port
     variable home [file dirname [file normalize [info script]]]
-
+    variable no_legacy 1
     proc BGERROR {lower e eo} {
 	if {[dict exists $eo -errorcode]} {
 	    set rest [lassign [dict get $eo -errorcode] errcode subcode]
@@ -237,6 +236,10 @@ namespace eval H {
 
     # NoCache - HTTP contents may not be Cached
     proc NoCache {{rsp {}}} {
+	if {[dict exists $rsp -reply]} {
+	    dict set rsp -reply [NoCache [dict get $rsp -reply]]
+	    return $rsp
+	}
 	dict set rsp cache-control "no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0"; # HTTP/1.1
 	dict set rsp expires "Sun, 01 Jul 2005 00:00:00 GMT"	;# deep past
 	dict set rsp pragma "no-cache"	;# HTTP/1.0
@@ -440,13 +443,13 @@ namespace eval H {
 	set chans [chan names]
 	dict for {s v} $sockets {
 	    if {$s ni $chans} {
-		lappend result "<section>$s DEAD</section>"
+		lappend result "HTTP $s DEAD</section>"
 		dict unset sockets $s
 		continue
 	    }
 	    lappend result <section>
 	    try {
-		set line "$s eof:[chan eof $s]"
+		set line "HTTP $s eof:[chan eof $s]"
 	    } on error {e eo} {
 		dict unset sockets $s
 		continue
@@ -520,7 +523,7 @@ namespace eval H {
 	    if {[string match sock* $chan] && ![dict exists $sockets $chan]} {
 		set config [chan configure $chan]
 		if {![dict exists $config -peername]} {
-		    lappend result <p>Listener $chan - [dict get? $config -sockname]</p>
+		    lappend result <p>Listener $chan [dict get? $config -sockname]</p>
 		} else {
 		    lappend result <p>ROGUE $chan - $config</p>
 		}
@@ -546,12 +549,25 @@ namespace eval H {
 	dict set sockets $socket $direction [info coroutine] $op
     }
 
+    # access_log - write an 
+    proc access_log {r} {
+	corovar access_log_fd
+	puts stderr "access_log write $access_log_fd"
+	corovar ipaddr
+	set time [clock format [expr {[dict get $r -time]/1000}] -format {%d/%b/%Y:%T %z}]
+	set request [dict get? $r -Header full]
+	set code [dict get $r -reply -code]
+	set size [expr {[dict exists $r -reply -size]?[dict get $r -reply -size]:0}]
+	set referer [dict get? $r referer]
+	set agent [dict get? $r user-agent]
+	puts $access_log_fd [format {%s - - [%s] "%s" %d %d "%s" "%s"} $ipaddr $time $request $code $size $referer $agent]
+    }
+
     # Pipeline - listener passes control here, with a new socket
     # this is where the action happens
     proc Pipeline {opts socket ipaddr rport} {
 	try {
 	    Debug.listener {Pipeline $opts $socket $ipaddr $rport}
-	    state_log {"" pipeline connect $socket $ipaddr $rport}
 
 	    # set up socket encoding and translation - it should never change
 	    chan configure $socket -encoding binary -translation {binary binary} -buffering full
@@ -592,13 +608,12 @@ namespace eval H {
 	    set Rx ${namespace}::R::$socket
 
 	    # create a coro for rx one for tx, arrange for the socket to close respective half on termination
-	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	direction output;# create Tx coro around H::Tx command
-	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	direction input;# create Rx coro around H::Rx command
-
-	    # follow these coroutines
 	    variable sockets
+	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	direction output;# create Tx coro around H::Tx command
 	    dict set sockets $socket output $Tx start
 	    trace add command $Tx delete [list H::corodead output $socket]
+
+	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	direction input;# create Rx coro around H::Rx command
 	    dict set sockets $socket input $Rx start
 	    trace add command $Rx delete [list H::corodead input $socket]
 
@@ -642,6 +657,19 @@ namespace eval H {
 	    set socket_cmd ::socket
 	    set tls {}
 	}
+
+	# provide access_log_fd to Tx
+	if {[dict exists $args access_log]} {
+	    set access_log [dict get $args access_log]
+	    dict unset args access_log
+	} elseif {[dict exists $args access_log_fd]} {
+	    set access_log_fd [dict get $args access_log_fd]
+	    dict unset args access_log_fd
+	} else {
+	    set access_log [file join [pwd] access-$port.log]
+	    set access_log_fd [open $access_log a]
+	}
+	dict set args access_log_fd $access_log_fd
 
 	# start the listener
 	Debug.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}

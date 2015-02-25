@@ -587,7 +587,6 @@ proc RxEntity {R} {
 	dict set R -Header state {RxEntity EOF}
 	set R [RxEntityEOF $R]
     }
-    state_log {R rx entity [dict get $R -socket] [dict get $R -transaction]}
     Debug.entity {[info coroutine] RxEntity Done ($R)}
     dict set R -Header state Entity
     return $R
@@ -609,7 +608,6 @@ proc RxHeaders {R} {
 
     set R [Parse $R]
 
-    state_log {R rx headers [dict get $R -socket] [dict get $R -transaction]}
     return $R
 }
 
@@ -635,6 +633,7 @@ variable rx_defaults [defaults {
 proc RxProcess {R} {
     while {1} {
 	set state [lindex [dict get $R -Header state] 0]
+	Trace $state
 
 	Debug.process {[info coroutine] RxProcess in state '$state' ($R)}
 
@@ -646,8 +645,14 @@ proc RxProcess {R} {
 
 	    Request {
 		# have read first line of header
-		if {![string match HTTP/* [lindex [split [string trim [dict get $R -Full]] " "] end]]} {
-		    Bad $R "This isn't even HTTP '[string trim [dict get $R -Full]]'"
+		variable no_legacy
+		set http [string toupper [lindex [split [string trim [dict get $R -Full]] " "] end]]
+		if {![string match HTTP/* $http]} {
+		    set message "This isn't even HTTP '[string trim [dict get $R -Full]]'"
+		    return -code error -errorcode HTTP $message
+		    Bad $R $message
+		} elseif {$no_legacy && $http eq "HTTP/1.0"} {
+		    return -code error -errorcode HTTP "We don't do HTTP/1.0"
 		}
 		set R [RxHeaders $R]	;# fetch all remaining headers
 	    }
@@ -754,11 +759,11 @@ proc Rx {args} {
 	   && [chan pending input $socket] != -1 && [chan pending output $socket] != -1
 	   && (![dict exists $R connection] || [string tolower [dict get $R connection]] ne "close")
        } {
-	state_log {R rx request $socket $transaction}
-
 	try {
 	    # receive and process packet
-	    set R $Rtemplate; dict set R -transaction [incr transaction]	;# set up initial request dict
+	    set R $Rtemplate
+	    dict set R -transaction [incr transaction]	;# set up initial request dict
+	    dict set R -time [clock milliseconds]
 
 	    Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
 	    set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
@@ -771,7 +776,6 @@ proc Rx {args} {
 	    $tx TxReply $R		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
-	    state_log {R rx http $socket $transaction}
 	    Debug.httpd {[info coroutine] Httpd $e}
 	    break
 	} trap EOF {e eo} {
@@ -780,10 +784,8 @@ proc Rx {args} {
 	    break
 	} trap TIMEOUT {e eo} {
 	    if {[dict get $eo -errorcode] eq ""} {
-		state_log {R rx inactive $socket $transaction}
 		Debug.httpd {[info coroutine] Inactive $e}
 	    } else {
-		state_log {R rx timeout $socket $transaction}
 		Debug.httpd {[info coroutine] Httpd $e}
 	    }
 	    break
@@ -847,7 +849,6 @@ proc Rx {args} {
 	} on error {e eo} {
 	    Debug.error {[info coroutine] Error '$e' ($eo)}
 	    $tx TxReply [ServerError $R $e $eo]		;# transmit the error
-	    state_log {R rx error $socket $transaction}
 	}
     }
 
@@ -861,7 +862,6 @@ proc Rx {args} {
 	# default termination - close it all down
 	catch {chan close $socket read}	;# close the socket read side
 	catch {$tx TxClose 1}		;# inform Tx coro that we're closing
-	state_log {R rx closed $socket $transaction $reason}
 	if {[info exists ondisconnect]} {
 	    Debug.process {[info coroutine] ondisconnect '$ondisconnect' ($R)}
 	    try {

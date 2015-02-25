@@ -434,7 +434,10 @@ proc TxComplete {args} {
 	corovar terminate; incr terminate
 	corovar flush; incr flush
     }
-    unset rq	;# we've completed the asynchronous reply
+
+    Trace [list sent [dict get $rq -transaction]]
+    access_log $rq
+    unset rq	;# we've completed the asynchronous reply - become idle
     corovar sent; incr sent	;# we've sent another reply
 }
 
@@ -822,6 +825,9 @@ proc Tx {args} {
 	while {![catch {chan eof $socket} eof] && !$eof && [chan pending output $socket] != -1} {
 	    set cmd [::yieldm $result]	;# fetch next command
 	    Debug.process {[info coroutine] busy:[info exists rq] Tx yield $cmd}
+	    if {[lindex $cmd 0] ne "coroVars"} {
+		Trace [lindex $cmd 0]
+	    }
 	    set result [{*}$cmd]
 
 	    # there's a live request - go back to yield for any updates
