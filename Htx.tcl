@@ -380,8 +380,8 @@ proc TxFileCopyDone {r fd size {err ""}} {
 	Debug.httpd {[info coroutine] TxFileCopy succeeded $size bytes}
     }
 
-    [dict get $r -rx] UNPAUSE [info coroutine] 	;# unpause the Rx coro - it should currently be idle
-    after 0 [list [dict get $r -tx] TxComplete]	;# signal Tx is good to resume
+    after 0 [list [dict get $r -tx] TxComplete]	;# signal Tx is good to resume or terminate
+    catch {[dict get $r -rx] UNPAUSE [info coroutine]} 	;# unpause the Rx coro - it should currently be idle
 }
 
 # TxFileCopy - utility function to [chan copy] an open file

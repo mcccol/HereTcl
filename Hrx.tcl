@@ -871,6 +871,7 @@ proc Rx {args} {
 	    }
 	}
     }
+    catch {$tx TxTerminate 1}		;# shut down Tx
 
     Debug.process {[info coroutine] Termination: [if {[catch {chan eof $socket} eof] || $eof} {
 	set reason "EOF on socket"
