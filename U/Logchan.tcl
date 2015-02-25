@@ -1,7 +1,6 @@
 # Logchan - a channel which maintains a series of rotating and compressed logs
 package require Debug
 Debug define logchan
-Debug on logchan
 
 package provide Logchan 1.0
 
