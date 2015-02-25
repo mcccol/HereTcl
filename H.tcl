@@ -552,7 +552,6 @@ namespace eval H {
     # access_log - write an 
     proc access_log {r} {
 	corovar access_log_fd
-	puts stderr "access_log write $access_log_fd"
 	corovar ipaddr
 	set time [clock format [expr {[dict get $r -time]/1000}] -format {%d/%b/%Y:%T %z}]
 	set request [dict get? $r -Header full]
