@@ -785,6 +785,15 @@ proc TxClose {args} {
     if {[llength $args]} {
 	set close [lindex $args 0]	;# Tx might close too
     }
+
+    # remove any empty promised replies
+    corovar pending
+    dict for {trx request} $pending {
+	if {![dict size $request]} {
+	    dict unset pending $trx
+	}
+    }
+
     Debug.process {[info coroutine] Tx hears Rx is CLOSING close:$close}
 }
 

@@ -601,12 +601,11 @@ proc RxDead {coro s tx args} {
 # RxHeaders - collect the headers
 proc RxHeaders {R} {
     set R [Header $R]	;# collect all remaining headers
+    set R [Parse $R]
 
     # indicate to tx that a request with this transaction id
     # has been received and is (as yet) unsatisfied
     [dict get $R -tx] TxPending [dict get $R -transaction]
-
-    set R [Parse $R]
 
     return $R
 }
@@ -648,8 +647,7 @@ proc RxProcess {R} {
 		variable no_legacy
 		set http [string toupper [lindex [split [string trim [dict get $R -Full]] " "] end]]
 		if {![string match HTTP/* $http]} {
-		    set message "This isn't even HTTP '[string trim [dict get $R -Full]]'"
-		    return -code error -errorcode HTTP $message
+		    return -code error -errorcode HTTP "This isn't even HTTP '[string trim [dict get $R -Full]]'"
 		    Bad $R $message
 		} elseif {$no_legacy && $http eq "HTTP/1.0"} {
 		    return -code error -errorcode HTTP "We don't do HTTP/1.0"
