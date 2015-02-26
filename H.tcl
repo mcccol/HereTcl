@@ -443,7 +443,7 @@ namespace eval H {
 	set chans [chan names]
 	dict for {s v} $sockets {
 	    if {$s ni $chans} {
-		lappend result "HTTP $s DEAD</section>"
+		lappend result "<p>HTTP $s DEAD</p>"
 		dict unset sockets $s
 		continue
 	    }
