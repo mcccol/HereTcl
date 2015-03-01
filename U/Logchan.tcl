@@ -41,7 +41,7 @@ namespace eval Logchan {
 		set els [lrange [split $fn .] $elcount+1 end]
 		set newname [join [list $options(name) [expr {$oldest + 1}] {*}$els] .]
 		Debug.logchan {Rotate - rotate [dict get $files $oldest name] -> $newname}
-		file rename [dict get $files $oldest name] $newname
+		file rename -force [dict get $files $oldest name] $newname
 		if {[info exists options(compress)] && $options(compress) && [lindex $els end] ne "gz"} {
 		    # compress $newname
 		}
