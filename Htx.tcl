@@ -695,7 +695,7 @@ proc TxReply {r args} {
 
     corovar close
     if {$close} {
-	error "TxReply when closing '$close'"
+	#error "TxReply when closing '$close'"
     }
     tailcall TxQueue $r
 }
