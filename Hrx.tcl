@@ -783,28 +783,28 @@ proc Rx {args} {
 		set R [{*}$process $R]		;# mainly used to test H
 	    }
 	} on ok {} {
-	    Debug.httpd {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
+	    Debug.process {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
 	    dict set Trace $transaction [dict get? $R -Header full]
 	    $tx TxReply $R		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
-	    Debug.httpd {[info coroutine] Httpd $e}
+	    Debug.process {[info coroutine] Httpd $e}
 	    break
 	} trap EOF {e eo} {
 	    # EOF while processing
-	    Debug.httpd {[info coroutine] EOF waiting for request}
+	    Debug.process {[info coroutine] EOF waiting for request}
 	    break
 	} trap TIMEOUT {e eo} {
 	    if {[dict get $eo -errorcode] eq ""} {
-		Debug.httpd {[info coroutine] Inactive $e}
+		Debug.process {[info coroutine] Inactive $e}
 	    } else {
-		Debug.httpd {[info coroutine] Httpd $e}
+		Debug.process {[info coroutine] Httpd $e}
 	    }
 	    $tx TxReply [TimeOut $R]		;# transmit the timeout
 	    break
 	} trap SUSPEND {} {
 	    # keep processing more input - this dispatcher has suspended and will handle its own response
-	    Debug.httpd {[info coroutine] Dispatch: SUSPEND}
+	    Debug.process {[info coroutine] Dispatch: SUSPEND}
 	} trap WEBSOCKET {R eo} {
 	    # connection has been Upgraded to a WebSocket
 	    # HTTP processing is complete - turn off Rx events
@@ -813,7 +813,7 @@ proc Rx {args} {
 	    }
 	    catch {Readable $socket}		;# turn off the chan event readable
 
-	    Debug.httpd {[info coroutine] WEBSOCKET ($R) [namespace current] / ([namespace import])}
+	    Debug.process {[info coroutine] WEBSOCKET ($R) [namespace current] / ([namespace import])}
 	    try {
 		# abort the caller command, initiate WEBSOCKET mode
 		set R [ws accept $R]		;# construct websocket handshake
@@ -840,7 +840,7 @@ proc Rx {args} {
 		# Now we know the Tx has shut down, we're free to websocket - go active
 		ws active $R		;# websocket owns this coroutine now
 	    } trap HTTP {e eo} {
-		Debug.httpd {[info coroutine] WebSocket Httpd $e}
+		Debug.process {[info coroutine] WebSocket Httpd $e}
 	    } on error {e eo} {
 		Debug.error {[info coroutine] WebSocket Error '$e' ($eo)}
 		$tx TxReply [ServerError $R $e $eo]		;# transmit the error
@@ -848,13 +848,13 @@ proc Rx {args} {
 	} trap CLOSE {e eo} {
 	    # the process has completed the transaction and wants to close
 	    # we have nothing to do but wait
-	    Debug.httpd {[info coroutine] CLOSE}
+	    Debug.process {[info coroutine] CLOSE}
 	    Trace close
 	    break
 	} trap PASSTHRU {e eo} {
 	    # the process has handed off our socket to another process
 	    # we have nothing to do but wait
-	    Debug.httpd {[info coroutine] PASSTHRU}
+	    Debug.process {[info coroutine] PASSTHRU}
 	    set passthru 1
 	    Trace passthru
 	    break
