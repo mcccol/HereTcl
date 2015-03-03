@@ -189,6 +189,15 @@ proc Parse {R} {
     return $R
 }
 
+# RxStopTimer - stop any currently running timer
+proc RxStopTimer {} {
+    # stop timer, if it exists
+    corovar timer
+    if {[info exists timer]} {
+	catch {::after cancel $timer}; unset timer
+    }
+}
+
 # RxWait - wait for some input to process
 proc RxWait {where} {
     corovar timer
@@ -220,6 +229,7 @@ proc RxWait {where} {
 
     corovar socket; Readable $socket [info coroutine]
     while {1} {
+	Trace $where
 	set rest [lassign [::yieldm $where] exception]			;# wait for READ event
 	if {$exception eq "coroVars"} {
 	    set where [coroVars {*}$rest]
@@ -231,35 +241,39 @@ proc RxWait {where} {
 	catch {::after cancel $timer}; unset timer
     }
 
-    if {$exception eq "PAUSE"} {
-	Debug.httpd {[info coroutine] PAUSEd $rest}
-	set paused [chan event $socket readable]	;# remember the readable event
-	Readable $socket				;# turn off readable event
+    switch -- $exception {
+	PAUSE {
+	    Debug.httpd {[info coroutine] PAUSEd $rest}
+	    set paused [chan event $socket readable]	;# remember the readable event
+	    Readable $socket				;# turn off readable event
 
-	# we've been PAUSEd, so now wait for a matching UNPAUSE event, then restart rx processing
-	set where PAUSE
-	while {1} {
-	    set rest [lassign [::yieldm $where] exception]			;# wait for some event
-	    if {$exception ne "UNPAUSE"} {
+	    # we've been PAUSEd, so now wait for a matching UNPAUSE event, then restart rx processing
+	    set where PAUSE
+	    while {1} {
+		set rest [lassign [::yieldm $where] exception]			;# wait for some event
+		if {$exception ne "UNPAUSE"} {
 		error "[info coroutine] received unexpected event '$exception $rest' while PAUSEd"
-	    } elseif {$exception eq "coroVars"} {
-		set where [coroVars {*}$rest]
-	    } else break
+		} elseif {$exception eq "coroVars"} {
+		    set where [coroVars {*}$rest]
+		} else break
+	    }
+
+	    Debug.httpd {[info coroutine] UNPAUSEd $rest}
+
+	    # restart timer, if required
+	    if {$time > 0} {
+		set timer [::after [expr {$time*1000}] [info coroutine] TIMEOUT $where]
+	    }
+	    Readable $socket {*}$paused			;# resume readable event
+
 	}
-
-	Debug.httpd {[info coroutine] UNPAUSEd $rest}
-
-	# restart timer, if required
-	if {$time > 0} {
-	    set timer [::after [expr {$time*1000}] [info coroutine] TIMEOUT $where]
+	"" {
+	    return 0	;# we have a servicable event
 	}
-	Readable $socket {*}$paused			;# resume readable event
-
-    } elseif {$exception ne ""} {
-	Debug.httpd {[info coroutine] Exception '$exception' from '$rest' while waiting for '$where'}
-	return -code error -errorcode [list $exception $rest] "$exception from $rest"
-    } else {
-	return 0	;# we have a servicable event
+	default {
+	    Debug.httpd {[info coroutine] Exception '$exception' from '$rest' while waiting for '$where'}
+	    return -code error -errorcode [list $exception $rest] "$exception from $rest"
+	}
     }
 }
 
@@ -279,7 +293,6 @@ proc Header {r {one 0}} {
     }
 
     while {![catch {chan eof $socket} eof] && !$eof} {
-	Trace $state
 	RxWait $state
 	set len [gets $socket line]
 	if {$len == -1} {
@@ -449,7 +462,7 @@ proc RxEntityEOF {r} {
 	dict set r -entity [::zlib inflate [dict get $r -entity]]
     }
 
-    dict set r -reply content-length 
+    dict set r -reply content-length
 
     return $r
 }
@@ -476,7 +489,7 @@ proc RxEntitySized {r} {
     # decide whether to read to RAM or disk
     if {$todisk > 0 && $left > $todisk} {
 	# this entity is too large to be handled in memory, write it to disk
-	
+
 	# create a temp file to contain entity
 	set entity [Tmpfile $r]
 	chan configure $entity -encoding binary
@@ -545,7 +558,7 @@ proc RxEntitySized {r} {
 
 # RxEntity - return a request dict containing any Entity
 proc RxEntity {R} {
-    
+
     # Read Entity (if any)
     # TODO: 4.4.2 If a message is received with both
     # a Transfer-Encoding header field
@@ -654,7 +667,7 @@ proc RxProcess {R} {
 		}
 		set R [RxHeaders $R]	;# fetch all remaining headers
 	    }
-	    
+
 	    Headers {
 		# have read all headers
 		set R [Parse $R]	;# parse $headers as a complete request header
@@ -701,7 +714,7 @@ proc RxProcess {R} {
 		Debug.process {[info coroutine] RxProcess EOF rx state '$state' ($R)}
 		return -code error -errorcode EOF $R	;# abort the caller command
 	    }
-	    
+
 	    default {
 		error "Invalid Header state '$state'"
 	    }
@@ -764,6 +777,7 @@ proc Rx {args} {
 	    dict set R -time [clock milliseconds]
 
 	    Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
+
 	    set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
 	    if {[info exists process]} {
 		set R [{*}$process $R]		;# mainly used to test H
@@ -777,7 +791,7 @@ proc Rx {args} {
 	    Debug.httpd {[info coroutine] Httpd $e}
 	    break
 	} trap EOF {e eo} {
-	    # EOF while processing 
+	    # EOF while processing
 	    Debug.httpd {[info coroutine] EOF waiting for request}
 	    break
 	} trap TIMEOUT {e eo} {
@@ -786,6 +800,7 @@ proc Rx {args} {
 	    } else {
 		Debug.httpd {[info coroutine] Httpd $e}
 	    }
+	    $tx TxReply [TimeOut $R]		;# transmit the timeout
 	    break
 	} trap SUSPEND {} {
 	    # keep processing more input - this dispatcher has suspended and will handle its own response
@@ -828,8 +843,7 @@ proc Rx {args} {
 		Debug.httpd {[info coroutine] WebSocket Httpd $e}
 	    } on error {e eo} {
 		Debug.error {[info coroutine] WebSocket Error '$e' ($eo)}
-		set R [ServerError $R $e $eo]
-		$tx TxReply $R		;# transmit the error
+		$tx TxReply [ServerError $R $e $eo]		;# transmit the error
 	    }
 	} trap CLOSE {e eo} {
 	    # the process has completed the transaction and wants to close

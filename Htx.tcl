@@ -436,7 +436,7 @@ proc TxComplete {args} {
     }
 
     Trace [list sent [dict get $rq -transaction]]
-    access_log $rq
+    catch {access_log $rq}
     unset rq	;# we've completed the asynchronous reply - become idle
     corovar sent; incr sent	;# we've sent another reply
 }

@@ -373,6 +373,11 @@ namespace eval H {
 	return $rq
     }
 
+    # TimeOut - request timeout
+    proc TimeOut {rq args} {
+	tailcall Ok $rq -code 408 {*}$args
+    }
+
     # copydone - end of passthru
     proc copydone {coro socket sdir fsd fdir args} {
 	Debug.direct {$socket PASSTHRU DONE: $sdir $args}
