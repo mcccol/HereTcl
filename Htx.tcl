@@ -833,7 +833,7 @@ proc Tx {args} {
 	set result {}
 	while {![catch {chan eof $socket} eof] && !$eof && [chan pending output $socket] != -1} {
 	    set cmd [::yieldm $result]	;# fetch next command
-	    Debug.process {[info coroutine] busy:[info exists rq] Tx yield [set __x $cmd; dict set __x -content /elided/; set __x}
+	    Debug.process {[info coroutine] busy:[info exists rq] Tx yield [set __x $cmd; dict set __x -content /elided/; set __x]}
 	    if {[lindex $cmd 0] ne "coroVars"} {
 		Trace [lindex $cmd 0]
 	    }
