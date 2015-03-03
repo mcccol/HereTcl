@@ -783,7 +783,7 @@ proc Rx {args} {
 		set R [{*}$process $R]		;# mainly used to test H
 	    }
 	} on ok {} {
-	    Debug.process {[info coroutine] Dispatch: OK ($R) - READABLE [chan event $socket readable]}
+	    Debug.process {[info coroutine] Dispatch: OK ([set __x $R; dict set __x -reply -content @elided@; set __x]) - READABLE [chan event $socket readable]}
 	    dict set Trace $transaction [dict get? $R -Header full]
 	    $tx TxReply $R		;# finally, transmit the response
 	} trap HTTP {e eo} {
