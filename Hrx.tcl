@@ -326,7 +326,7 @@ proc Header {r {one 0}} {
 		return $r
 	    }
 	} else {
-	    Debug.process {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
+	    Debug.httpd {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
 	    dict append r -Full [string range $line 0 end-1] \n	;# append all lines in header
 	    if {$one} {
 		dict set r -Header state $state

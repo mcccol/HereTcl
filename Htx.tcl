@@ -421,7 +421,7 @@ proc TxComplete {args} {
     # completed a passthru or async response
     # this request is no longer pending
     corovar rq
-    Debug.httpd {[info coroutine]/[dict get $rq -transaction] Tx Complete}
+    Debug.process {[info coroutine]/[dict get $rq -transaction] Tx Complete}
 
     corovar gzipper
     if {[info exists gzipper]} {
