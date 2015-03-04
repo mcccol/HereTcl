@@ -198,6 +198,11 @@ namespace eval H {
 	    return -code return $r	;# no more processing
 	}
     }
+    
+    proc rdump {r} {
+	dict set r -reply -content <elided>
+	return $r
+    }
 
     # sstate - return socket state
     proc sstate {socket} {

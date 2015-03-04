@@ -676,12 +676,12 @@ proc TxQueue {r args} {
 	# this reply is a duplicate of an already-sent packet
 	# this could happen if a processing command has sent us
 	# multiple responses.  First one wins, fellers.
-	Debug.error {[info coroutine] Send discarded: duplicate (H $r)}
+	Debug.error {[info coroutine] Send discarded: duplicate $trx <= $sent (H [H rdump $r])}
     } elseif {[dict exists $pending $trx] && [dict size [dict get $pending $trx]]} {
 	# a duplicate response has been sent - discard this
 	# this could happen if a dispatcher sends a response,
 	# and subsequently gets an error which we try to send out
-	Debug.error {[info coroutine] Send discarded: duplicate (H $r) - sent:([dict get $pending $trx])}
+	Debug.error {[info coroutine] Send discarded: duplicate [dict exists $pending $trx] && [dict size [dict get $pending $trx]] (H [H rdump $r]) - sent:([H rdump [dict get $pending $trx]])}
     } else {
 	corovar pending
 	dict set r -reply -transaction [dict get $r -transaction]
