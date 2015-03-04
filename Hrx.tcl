@@ -731,6 +731,11 @@ proc suspend {R} {
     return -errorcode SUSPEND $R
 }
 
+proc Cleanup {args} {
+    corovar cleanup
+    lappend cleanup $args
+}
+
 # Rx - coroutine to process pipeline reception
 proc Rx {args} {
     # all of these variables become corovars
@@ -738,6 +743,7 @@ proc Rx {args} {
     variable connection_count
 
     set args [dict merge $rx_defaults $args]
+    set cleanup {}
     dict with args {}; unset args	;# install rx state vars
 
     if {![info exists dispatch]} {
@@ -880,6 +886,14 @@ proc Rx {args} {
 		{*}$ondisconnect [info coroutine] [info locals]
 	    } on error {e eo} {
 		Debug.error {ondisconnect '$e' ($eo)}
+	    }
+	}
+
+	foreach cu $cleanup {
+	    try {
+		{*}$cleanup [info coroutine]
+	    } on error {e eo} {
+		Debug.error {cleanup '$e' ($eo)}
 	    }
 	}
     }

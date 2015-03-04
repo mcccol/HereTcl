@@ -695,7 +695,7 @@ proc TxReply {r args} {
 
     corovar close
     if {$close} {
-	#error "TxReply when closing '$close'"
+	Debug.error {TxReply when closing '$close'}
     }
     tailcall TxQueue $r
 }
@@ -854,7 +854,7 @@ proc Tx {args} {
 	    # received a response - if Tx is idle, process all pending responses.
 	    # requests are stored in order of reception because of pending message,
 	    # so we process each pending request in natural key order.  Thank you dkf for that ability.
-	    Debug.process {[info coroutine] processing [dict keys $pending]}
+	    Debug.process {[info coroutine] processing ([dict keys $pending])}
 	    foreach next [dict keys $pending] {
 		# consume next pending response as $rq - from this point on, we are not idle
 		set rq [dict get $pending $next]	;# we are now busy processing $reply
