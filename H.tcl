@@ -350,7 +350,7 @@ namespace eval H {
 		set rsp [dict merge $rsp $args]
 		set rsp [NoCache $rsp]
 	    }
-	    [dict get $rq -tx] TxReply $rq
+	    [dict get $rq -tx] TxReply $rq BAD {*}$args
 	} else {
 	    # this isn't even HTTP - don't bother with the Tx
 	}

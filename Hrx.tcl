@@ -55,7 +55,7 @@ proc CharEncoding {r} {
     }
     if {$charset ni [encoding names]} {
 	# send NotAcceptable
-	corovar tx; tailcall $tx TxReply [dict merge $r {-code 406}]
+	corovar tx; tailcall $tx TxReply [dict merge $r {-code 406}] NotAcceptable charset encoding
     }
 
     return $charset	;# return the encoding we've selected
@@ -808,7 +808,7 @@ proc Rx {args} {
 	} on ok {} {
 	    Debug.process {[info coroutine] Dispatch: OK ([set __x $R; dict set __x -reply -content @elided@; set __x]) - READABLE [chan event $socket readable]}
 	    dict set Trace $transaction [dict get? $R -Header full]
-	    $tx TxReply $R		;# finally, transmit the response
+	    $tx TxReply $R OK		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
 	    Debug.process {[info coroutine] Httpd $e}
@@ -823,7 +823,7 @@ proc Rx {args} {
 	    } else {
 		Debug.process {[info coroutine] Httpd $e}
 	    }
-	    $tx TxReply [TimeOut $R]		;# transmit the timeout
+	    $tx TxReply [TimeOut $R] TIMEOUT		;# transmit the timeout
 	    break
 	} trap SUSPEND {} {
 	    # keep processing more input - this dispatcher has suspended and will handle its own response
@@ -844,7 +844,7 @@ proc Rx {args} {
 		if {[dict exists $R -ws]} {
 		    set wsprocess [dict get $R -ws]
 		}
-		$tx TxReply $R		;# transmit the websocket handshake accept
+		$tx TxReply $R WEBSOCKET	;# transmit the websocket handshake accept
 		$tx TxMark [info coroutine] WEBSOCKET	;# inform us when the tx queue is exhausted
 		Trace WebSocket
 
@@ -870,7 +870,7 @@ proc Rx {args} {
 		Debug.process {[info coroutine] WebSocket Httpd $e}
 	    } on error {e eo} {
 		Debug.error {[info coroutine] WebSocket Error '$e' ($eo)}
-		$tx TxReply [ServerError $R $e $eo]		;# transmit the error
+		$tx TxReply [ServerError $R $e $eo] WebSocket Error		;# transmit the error
 	    }
 	} trap CLOSE {e eo} {
 	    # the process has completed the transaction and wants to close
@@ -887,7 +887,7 @@ proc Rx {args} {
 	    break
 	} on error {e eo} {
 	    Debug.error {[info coroutine] Error '$e' ($eo)}
-	    $tx TxReply [ServerError $R $e $eo]		;# transmit the error
+	    $tx TxReply [ServerError $R $e $eo] Error		;# transmit the error
 	}
     }
 
