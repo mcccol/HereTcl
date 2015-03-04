@@ -746,7 +746,7 @@ proc suspend {R {holding 0}} {
 	Debug.process {[info coroutine] suspending without hold}
     }
 
-    return -errorcode SUSPEND $R
+    return -code error -errorcode SUSPEND $R
 }
 
 proc Cleanup {args} {
