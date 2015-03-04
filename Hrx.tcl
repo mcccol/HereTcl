@@ -863,8 +863,9 @@ proc Rx {args} {
 			corovar hold; incr hold
 		    } elseif {$exception eq "release"} {
 			corovar hold; incr hold -1
+		    } else {
+			Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
 		    }
-		    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
 		}
 
 		# Now we know the Tx has shut down, we're free to websocket - go active
@@ -911,8 +912,9 @@ proc Rx {args} {
 		incr hold
 	    } elseif {$exception eq "release"} {
 		incr hold -1
+	    } else {
+		Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
 	    }
-	    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
 	}
 
 	# default termination - close it all down
