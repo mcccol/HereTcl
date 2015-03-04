@@ -202,7 +202,7 @@ namespace eval H {
     # sstate - return socket state
     proc sstate {socket} {
 	if {[catch {eof $socket} eof]} {
-	    return [list socket $socket eof 1 state defunct]
+	    return [list socket $socket eof 1 in -1 out -1 state defunct]
 	} else {
 	    set inp [chan pending input $socket]
 	    set outp [chan pending output $socket]

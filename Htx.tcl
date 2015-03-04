@@ -692,11 +692,6 @@ proc TxQueue {r args} {
 # TxReply - Rx has sent us a reply
 proc TxReply {r args} {
     Debug.httpdtx {[info coroutine] Tx received reply ($r)}
-
-    corovar close
-    if {$close} {
-	Debug.error {TxReply when closing '$close'}
-    }
     tailcall TxQueue $r
 }
 
@@ -887,7 +882,7 @@ proc Tx {args} {
 		    after 0 {*}$mark
 		    set mark {}
 		}
-		if {$close} {
+		if {[dict get [H sstate $socket] in] == -1} {
 		    catch {chan close $socket write}
 		    break
 		}
