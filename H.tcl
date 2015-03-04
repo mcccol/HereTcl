@@ -15,6 +15,7 @@ set ::tcl::unsupported::noReverseDNS 1	;# turn off reverse DNS
 # event logging hook - default a Noop
 proc ::Noop {args} {}
 proc ::Identity {x} {return $x}
+interp alias {} result {} ::return -level 0
 
 # try to load the Debug module, for nice formatted debug narrative
 if {[catch {
@@ -28,6 +29,7 @@ if {[catch {
     Debug on error
     Debug define httpd
     Debug define process
+    Debug define passthru
     Debug define listener
     Debug define httpdlow
     Debug define httpdbad
@@ -194,6 +196,26 @@ namespace eval H {
 	    #tx_$socket $r	;# send the CORS response
 
 	    return -code return $r	;# no more processing
+	}
+    }
+
+    # sstate - return socket state
+    proc sstate {socket} {
+	if {[catch {eof $socket} eof]} {
+	    return [list socket $socket eof 1 state defunct]
+	} else {
+	    set inp [chan pending input $socket]
+	    set outp [chan pending output $socket]
+	    set ev [if {$inp != -1} {llength [chan event $socket readable]} else {result -1}]
+	    if {$ev == 0} {
+		set state idle
+	    } elseif {$ev == -1} {
+		set state unreadable
+	    } else {
+		set state live
+	    }
+		
+	    return [list socket $socket eof $eof in $inp out $outp ev $ev state $state]
 	}
     }
 
@@ -379,17 +401,21 @@ namespace eval H {
     }
 
     # copydone - end of passthru
-    proc copydone {coro socket sdir fsd fdir args} {
-	Debug.direct {$socket PASSTHRU DONE: $sdir $args}
-	variable copydone
-	if {[info exists copydone($socket.$fsd)]} {
-	    # wait until both directions have closed
-	    catch {chan close $socket}
-	    catch {chan close $fsd}
-	    unset copydone($socket.$fsd)
-	} else {
-	    set copydone($socket.$fsd) 1
+    proc copydone {coro input output dir args} {
+	Debug.passthru {$input->$output PASSTHRU DONE: $dir $args input:([sstate $input]) / output: ([sstate $output])}
+	try {
+	    chan close $input read
+	} on error {e eo} {
+	    puts stderr "closing $input input '$e' ($eo)"
 	}
+	try {
+	    chan flush $output
+	    chan close $output write
+	} on error {e eo} {
+	    puts stderr "closing $output output '$e' ($eo)"
+	}
+
+	Debug.passthru {$input->$output PASSTHRU DONE2: $dir $args input:([sstate $input]) / output: ([sstate $output])}
     }
 
     # coroVars - debug coro

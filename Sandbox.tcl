@@ -4,13 +4,13 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     # try to load the rest of H, if this is running as part of the ensemble of modules
     set ::home [file dirname [file normalize [info script]]]
 
-    if {[file exists [file join [pwd] H]]} {
+    if {[file exists [file join [pwd] H.tcl]]} {
 	# find a directory called H relative to the user's working directory
 	# and use it for the H server sources
 	set pwd [file normalize [pwd]]
     } else {
 	# find a directory called H, relative to this script and use it for the H server sources
-	for {set pwd $::home} {$pwd ne "/" && ![file exists [file join $pwd H]]} {set pwd [file dirname $pwd]} {}
+	for {set pwd $::home} {$pwd ne "/" && ![file exists [file join $pwd H H.tcl]]} {set pwd [file dirname $pwd]} {}
     }
     lappend ::auto_path $::home [file join $pwd H]
 }

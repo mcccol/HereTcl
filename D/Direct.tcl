@@ -219,20 +219,6 @@ oo::class create Direct {
 	return $r
     }
 
-    # copydone - end of passthru
-    method copydone {coro socket sdir fsd fdir args} {
-	Debug.direct {$socket PASSTHRU DONE: $sdir $args}
-	variable copydone
-	if {[info exists copydone($socket.$fsd)]} {
-	    # wait until both directions have closed
-	    catch {chan close $socket}
-	    catch {chan close $fsd}
-	    unset copydone($socket.$fsd)
-	} else {
-	    set copydone($socket.$fsd) 1
-	}
-    }
-
     # start passthru
     method passthru {r dsock {url ""}} {
 	#puts stderr "passthru '$url'"
@@ -251,8 +237,8 @@ oo::class create Direct {
 	chan event $socket readable {}
 	chan event $socket writable {}
 
-	chan copy $dsock $socket -command [list [self] copydone [info coroutine] $socket write $dsock read]
-	chan copy $socket $dsock -command [list [self] copydone [info coroutine] $socket read $dsock write]
+	chan copy $dsock $socket -command [list H copydone [info coroutine] $dsock $socket output]
+	chan copy $socket $dsock -command [list H copydone [info coroutine] $socket $dsock input]
 
 	return -code error -errorcode PASSTHRU	;# abort the caller command, initiate PASSTHRU mode
     }
