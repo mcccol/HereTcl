@@ -691,7 +691,7 @@ proc TxQueue {r args} {
 
 # TxReply - Rx has sent us a reply
 proc TxReply {r args} {
-    Debug.httpdtx {[info coroutine] Tx received reply ($r)}
+    Debug.process {[info coroutine] Tx received reply [dict get $r -transaction] ([H rdump $r])}
     tailcall TxQueue $r
 }
 
