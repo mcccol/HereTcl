@@ -741,6 +741,9 @@ proc suspend {R {holding 0}} {
 	if {[info exists hold]} {
 	    incr hold
 	}
+	Debug.process {[info coroutine] suspending with hold $hold}
+    } else {
+	Debug.process {[info coroutine] suspending without hold}
     }
 
     return -errorcode SUSPEND $R
@@ -799,7 +802,7 @@ proc Rx {args} {
 	    dict set R -transaction [incr transaction]	;# set up initial request dict
 	    dict set R -time [clock milliseconds]
 
-	    Debug.httpd {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
+	    Debug.process {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
 
 	    set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
 	    if {[info exists process]} {
