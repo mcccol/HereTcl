@@ -233,6 +233,10 @@ proc RxWait {where} {
 	set rest [lassign [::yieldm $where] exception]			;# wait for READ event
 	if {$exception eq "coroVars"} {
 	    set where [coroVars {*}$rest]
+	} elseif {$exception eq "hold"} {
+	    corovar hold; incr hold
+	} elseif {$exception eq "release"} {
+	    corovar hold; incr hold -1
 	} else break
     }
 
@@ -255,6 +259,10 @@ proc RxWait {where} {
 		error "[info coroutine] received unexpected event '$exception $rest' while PAUSEd"
 		} elseif {$exception eq "coroVars"} {
 		    set where [coroVars {*}$rest]
+		} elseif {$exception eq "hold"} {
+		    corovar hold; incr hold
+		} elseif {$exception eq "release"} {
+		    corovar hold; incr hold -1
 		} else break
 	    }
 
@@ -727,7 +735,14 @@ proc RxProcess {R} {
 
 # suspend - utility code
 # discontinue processing this request, leave it up to the caller to reply
-proc suspend {R} {
+proc suspend {R {holding 0}} {
+    if {$holding} {
+	corovar hold
+	if {[info exists hold]} {
+	    incr hold
+	}
+    }
+
     return -errorcode SUSPEND $R
 }
 
@@ -745,6 +760,8 @@ proc Rx {args} {
     set args [dict merge $rx_defaults $args]
     set cleanup {}
     dict with args {}; unset args	;# install rx state vars
+
+    set hold 0	;# a SUSPENDed process can hold us alive
 
     if {![info exists dispatch]} {
 	set dispatch RxProcess
@@ -839,6 +856,10 @@ proc Rx {args} {
 		    if {$exception eq "WEBSOCKET"} break
 		    if {$exception eq "coroVars"} {
 			set where [coroVars {*}$rest]
+		    } elseif {$exception eq "hold"} {
+			corovar hold; incr hold
+		    } elseif {$exception eq "release"} {
+			corovar hold; incr hold -1
 		    }
 		    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
 		}
@@ -877,6 +898,20 @@ proc Rx {args} {
     catch {Readable $socket}	;# turn off the chan event readable
 
     if {!$passthru} {
+	set where "Terminating"
+	while {$hold > 0} {
+	    Debug.process {[info coroutine] termination held $hold}
+	    set rest [lassign [::yieldm $where] exception]	;# wait for WEBSOCKET event from HWS.tcl
+	    if {$exception eq "coroVars"} {
+		set where [coroVars {*}$rest]
+	    } elseif {$exception eq "hold"} {
+		incr hold
+	    } elseif {$exception eq "release"} {
+		incr hold -1
+	    }
+	    Debug.error {[info coroutine] Got spurious event in Rx - ($exception $rest)}
+	}
+
 	# default termination - close it all down
 	catch {chan close $socket read}	;# close the socket read side
 	catch {$tx TxClose 1}		;# inform Tx coro that we're closing
