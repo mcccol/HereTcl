@@ -204,26 +204,6 @@ namespace eval H {
 	return $r
     }
 
-    # sstate - return socket state
-    proc sstate {socket} {
-	if {[catch {eof $socket} eof]} {
-	    return [list socket $socket eof 1 in -1 out -1 state defunct]
-	} else {
-	    set inp [chan pending input $socket]
-	    set outp [chan pending output $socket]
-	    set ev [if {$inp != -1} {llength [chan event $socket readable]} else {result -1}]
-	    if {$ev == 0} {
-		set state idle
-	    } elseif {$ev == -1} {
-		set state unreadable
-	    } else {
-		set state live
-	    }
-		
-	    return [list socket $socket eof $eof in $inp out $outp ev $ev state $state]
-	}
-    }
-
     # Cache - HTTP contents may be Cached
     proc Cache {rq {age 0} {realm ""}} {
 	dict update rq -reply rsp {
@@ -474,25 +454,41 @@ namespace eval H {
 	return $result
     }
 
+    # sstate - return socket state
+    proc sstate {socket} {
+	if {$socket ni $chans || [catch {eof $socket} eof]} {
+	    return [list socket $socket eof 1 in -1 out -1 state defunct]
+	} else {
+	    set inp [chan pending input $socket]
+	    set outp [chan pending output $socket]
+	    set ev [if {$inp != -1} {llength [chan event $socket readable]} else {result -1}]
+	    if {$ev == 0} {
+		set state idle
+	    } elseif {$ev == -1} {
+		set state unreadable
+	    } else {
+		set state live
+	    }
+		
+	    return [list socket $socket eof $eof in $inp out $outp ev $ev state $state]
+	}
+    }
+
     proc socketDump {} {
 	variable sockets
 	set chans [chan names]
 	dict for {s v} $sockets {
-	    if {$s ni $chans} {
-		lappend result "<p>HTTP $s DEAD</p>"
+	    set sstate [sstate $s]
+	    catch {unset in}
+	    catch {unset out}
+	    dict with $sstate {}
+	    if {$state eq "defunct"} {
+		lappend result "<p>HTTP $s DEFUNCT</p>"
 		dict unset sockets $s
 		continue
 	    }
-	    lappend result <section>
-	    try {
-		set line "HTTP $s eof:[chan eof $s]"
-	    } on error {e eo} {
-		dict unset sockets $s
-		continue
-	    }
+	    set line "HTTP $s ($state) eof:$eof listening:[expr {($ev <= 0)?0:1}]"
 
-	    catch {unset input}
-	    catch {unset output}
 	    set outD {}
 	    dict with v {}
 	    if {[info exists input]} {
@@ -507,11 +503,7 @@ namespace eval H {
 		set inD {}
 	    }
 	    append line " $iop"
-	    try {
-		append line " [chan pending input $s]"
-	    } on error {e eo} {
-		append line " -2"
-	    }
+	    append line " $in"
 
 	    if {[info exists output]} {
 		lassign $output oc oop
@@ -525,11 +517,8 @@ namespace eval H {
 		set outD {}
 	    }
 	    append line " $oop"
-	    try {
-		append line " [chan pending output $s]"
-	    } on error {e eo} {
-		append line " -2"
-	    }
+	    append line " $out"
+
 	    append line " " [dict get? [chan configure $s] -peername]
 	    lappend result <p>$line</p>
 
@@ -561,7 +550,7 @@ namespace eval H {
 		if {![dict exists $config -peername]} {
 		    lappend result <p>Listener $chan [dict get? $config -sockname]</p>
 		} else {
-		    lappend result <p>ROGUE $chan - $config</p>
+		    lappend result <p>Other [sstate $chan] - $config</p>
 		}
 	    }
 	}
