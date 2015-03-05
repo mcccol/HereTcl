@@ -456,7 +456,7 @@ namespace eval H {
 
     # sstate - return socket state
     proc sstate {socket} {
-	if {$socket ni $chans || [catch {eof $socket} eof]} {
+	if {$socket ni [chan names] || [catch {eof $socket} eof]} {
 	    return [list socket $socket eof 1 in -1 out -1 state defunct]
 	} else {
 	    set inp [chan pending input $socket]
@@ -476,7 +476,6 @@ namespace eval H {
 
     proc socketDump {} {
 	variable sockets
-	set chans [chan names]
 	dict for {s v} $sockets {
 	    set sstate [sstate $s]
 	    catch {unset in}
