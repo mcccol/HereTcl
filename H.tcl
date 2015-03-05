@@ -480,7 +480,7 @@ namespace eval H {
 	    set sstate [sstate $s]
 	    catch {unset in}
 	    catch {unset out}
-	    dict with $sstate {}
+	    dict with sstate {}
 	    if {$state eq "defunct"} {
 		lappend result "<p>HTTP $s DEFUNCT</p>"
 		dict unset sockets $s
