@@ -886,6 +886,7 @@ proc Rx {args} {
 	    # the process has handed off our socket to another process
 	    # we have nothing to do but wait
 	    Debug.process {[info coroutine] PASSTHRU}
+	    $tx TxPassthru 1
 	    set passthru 1
 	    Trace passthru
 	    break

@@ -798,6 +798,11 @@ proc TxTerminate {{t 1}} {
     Debug.process {[info coroutine] Tx Terminate}
 }
 
+proc TxPassthru {{p 1}} {
+    corovar passthru; set passthru $p
+    Debug.process {[info coroutine] Tx Passthru}
+}
+
 # TxContinue - Rx indicating it needs a 100-Continue sent ASAP
 proc TxContinue {args} {
     # 100-Continue will have to wait until Tx is not busy
@@ -814,6 +819,7 @@ proc Tx {args} {
     set sent 0		;# how many contiguous packets have we sent?
     set close 0		;# set if we're required to close
     set terminate 0	;# set if we're required to terminate
+    set passthru 0	;# set if we're in passthru mode
     set continue 0	;# no '100-continue' pending
     set trx 0		;# transaction number currently in play
     set mark {}		;# command to indicate exhausted Tx queue
@@ -882,10 +888,6 @@ proc Tx {args} {
 		    after 0 {*}$mark
 		    set mark {}
 		}
-		if {[dict get [H sstate $socket] in] == -1} {
-		    catch {chan close $socket write}
-		    break
-		}
 		if {$terminate} {
 		    break
 		}
@@ -902,6 +904,10 @@ proc Tx {args} {
     } on ok {e eo} {
 	#Debug.httpdtxlow {[info coroutine] Tx $socket OK '$e' ($eo)}
     } finally {
+	if {!$passthru} {
+	    catch {chan close $socket write}
+	}
+
 	if {[dict size $pending]} {
 	    Debug.error {[info coroutine] Tx DEAD with [dict size $pending] pending}
 	}
