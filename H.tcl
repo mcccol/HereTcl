@@ -492,31 +492,31 @@ namespace eval H {
 	    dict with v {}
 	    if {[info exists input]} {
 		lassign $input ic iop
+		append line " Rx:"
 		try {
 		    set inD [getCV $ic Trace]
-		    append line " <a href='$ic'>$ic</a> "
+		    append line <a href='$ic'>$ic</a> " "
 		} on error {e eo} {
 		    set inD {}
 		}
 	    } else {
 		set inD {}
 	    }
-	    append line " $iop"
-	    append line " $in"
+	    append line "$iop $in"
 
 	    if {[info exists output]} {
 		lassign $output oc oop
+		append line " Tx:"
 		try {
 		    set outD [getCV $oc Trace]
-		    append line " <a href='$oc'>$oc</a>"
+		    append line <a href='$oc'>$oc</a> " "
 		} on error {e eo} {
 		    set outD {}
 		}
 	    } else {
 		set outD {}
 	    }
-	    append line " $oop"
-	    append line " $out"
+	    append line "$oop $out"
 
 	    append line " " [dict get? [chan configure $s] -peername]
 	    lappend result <p>$line</p>
