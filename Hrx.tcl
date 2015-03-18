@@ -123,10 +123,15 @@ proc HeaderCheck {R} {
 	}
     }
 
-    if {[dict exists $R connection] && [string tolower [dict get $R connection]] eq "upgrade"} {
-	dict set R -Header state Upgrade
-    } else {
-	dict set R -Header state HeaderCheck
+    if {[dict exists $R connection]} {
+	switch -- [string tolower [dict get $R connection]] {
+	    upgrade {
+		dict set R -Header state Upgrade
+	    }
+	    default {
+		dict set R -Header state HeaderCheck
+	    }
+	}
     }
 
     Debug.httpdlow {[info coroutine] HeaderCheck done: $R}

@@ -904,6 +904,7 @@ proc Tx {args} {
     } on ok {e eo} {
 	#Debug.httpdtxlow {[info coroutine] Tx $socket OK '$e' ($eo)}
     } finally {
+	catch {chan flush $socket}
 	if {!$passthru} {
 	    catch {chan close $socket write}
 	}

@@ -593,7 +593,7 @@ namespace eval H {
 	    Debug.listener {Pipeline $opts $socket $ipaddr $rport}
 
 	    # set up socket encoding and translation - it should never change
-	    chan configure $socket -encoding binary -translation {binary binary} -buffering full
+	    chan configure $socket -encoding binary -translation {binary binary} -buffering none
 
 	    # construct Rx args from defaults
 	    set rx [list ipaddr $ipaddr rport $rport {*}$opts socket $socket]
