@@ -130,15 +130,15 @@ variable echo [subst {
     <h2>WebSocket Test</h2>  <div id="output"></div> 
 }]
 
-# dispatcher - this is the thing which determines where and how requests are processed
-# dispatcher is an instance of the Direct object, it interprets HTTP requests as
+# Dispatcher - this is the thing which determines where and how requests are processed
+# Dispatcher is an instance of the Direct object, it interprets HTTP requests as
 # Tcl command invocations (with arguments.)  Its implementation is in D/Direct.tcl
 #
 # You don't have to use Direct to dispatch on URLs, you can use any command prefix by
 # specifying the command prefix to [H listener] as the 'dispatch' argument.
 # HereTcl invokes {*}$dispatch $R, where $R is the (unprocessed) request dict.
 # The dispatch command's result is (by default) sent back to the client as a reply.
-Direct create dispatcher {
+Direct create Dispatcher {
     method /home {r} {
 	return [home do $r]
     }
@@ -321,8 +321,8 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 
 # start the H server's listener
 set largs {}				;# accumulate some arguments to the [H listen] command
-lappend largs dispatch {dispatcher do}	;# H will dispatch requests to dispatch for processing
-lappend largs wsprocess {dispatcher ws}	;# H will dispatch websocket upgrades to wsprocess for processing
+lappend largs dispatch {Dispatcher do}	;# H will dispatch requests to dispatch for processing
+lappend largs wsprocess {Dispatcher ws}	;# H will dispatch websocket upgrades to wsprocess for processing
 lappend largs tls {}			;# no TLS by default
 #lappend largs tls [list -require 0 -certfile server.crt -keyfile server.key -cadir $home]	;# for TLS - certs in $home
 #lappend largs access_log_fd stdout

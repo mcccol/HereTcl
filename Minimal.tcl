@@ -9,7 +9,7 @@ variable {*}$argv
 
 File create root root [file dirname [file normalize [info script]]]
 
-Direct create dispatcher {
+Direct create Dispatcher {
     method /root {r} {
 	return [root do $r]
     }
@@ -28,6 +28,6 @@ Direct create dispatcher {
     }
 }
 
-set ::listener [H listen dispatch {dispatcher do} $::port]
+set ::listener [H listen dispatch {Dispatcher do} $::port]
 
 ::vwait forever
