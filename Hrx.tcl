@@ -123,6 +123,7 @@ proc HeaderCheck {R} {
 	}
     }
 
+    dict set R -Header state HeaderCheck
     if {[dict exists $R connection]} {
 	switch -- [string tolower [dict get $R connection]] {
 	    upgrade {
