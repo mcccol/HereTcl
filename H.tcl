@@ -410,6 +410,7 @@ namespace eval H {
 	}
 
 	#puts stderr "CV [info coroutine] $args"
+	set result {}
 	foreach var [lsort $args] {
 	    lappend result {*}[::apply {{var} {
 		upvar #1 $var __XXX

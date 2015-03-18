@@ -425,7 +425,7 @@ proc RxEntityChunked {r} {
 	chan configure $entity -encoding $encoding
     }
 
-    if {$todisk == 0 || [chan tell size $epath] <= $todisk} {
+    if {$todisk == 0 || [file size $epath] <= $todisk} {
 	# we don't want to have things on disk, or it's small enough to have in memory
 	# ??? How is entity encoded? - got to read it with encoding
 	dict set r -entity [chan read $entity]	;# grab the entity in its entirety

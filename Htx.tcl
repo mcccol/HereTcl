@@ -21,7 +21,7 @@ proc log {r} {
     }
 
     # receipt time of connection
-    if {[info exists $r -received_seconds]} {
+    if {[dict exists $r -received_seconds]} {
 	lappend line \[[clock format [dict get $r -received_seconds] -format "%d/%b/%Y:%T %Z"]\]
     }
 
@@ -482,7 +482,7 @@ proc TxTransmit {} {
 	    }
 	    foreach n {transfer-encoding} {
 		if {[dict exists $reply $n]} {
-		    dict unset $reply $n
+		    dict unset reply $n
 		}
 	    }
 	} elseif {$code >= 200 && $code < 300} {
@@ -522,7 +522,7 @@ proc TxTransmit {} {
 	variable Errors
 	if {[dict exists $reply -error] && ![dict get $reply -error] eq ""} {
 	    set errmsg [dict get $reply -error]
-	} elseif {[info exist Errors($code)]} {
+	} elseif {[info exists Errors($code)]} {
 	    set errmsg $Errors($code)
 	} else {
 	    set errmsg "Error $code"
