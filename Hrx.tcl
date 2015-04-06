@@ -77,9 +77,6 @@ proc HeaderCheck {R} {
 	}
 	dict unset R connection
     }
-    if {![dict exists $R -Url]} {
-	#dict set R -Url {}
-    }
     set headers [split [dict get $R -Header full]]
     set uri [join [lrange $headers 1 end-1]]
     dict set R -Header uri $uri
@@ -87,6 +84,9 @@ proc HeaderCheck {R} {
     # fill -Url
     if {[dict exists $R host]} {
 	# client sent Host: field
+	if {![dict exists $R -Url]} {
+	    dict set R -Url {}
+	}
 	if {[string match http*:* $uri]} {
 	    # absolute Host: field
 	    # rfc 5.2 1 - a host header field must be ignored
