@@ -85,7 +85,7 @@ proc HeaderCheck {R} {
     dict set R -Header uri $uri
 
     # fill -Url
-    if {[dict exists $R -Url host]} {
+    if {[dict exists $R host]} {
 	# client sent Host: field
 	if {[string match http*:* $uri]} {
 	    # absolute Host: field
