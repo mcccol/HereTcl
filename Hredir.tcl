@@ -1,6 +1,23 @@
 # Hredir - redirection support for H
 Debug define url
 
+proc uri {x args} {
+    if {[llength $args] == 1} {
+	set args [lindex $args 0]
+    }
+    set result [url $x]
+
+    foreach {part pre post} {
+	query ? ""
+	fragment \# ""
+    } {
+	if {[dict exists $x $part]} {
+	    append result "${pre}[dict get $x $part]${post}"
+	}
+    }
+    return $result
+}
+
 # localuri - return a local uri, no host scheme or port
 proc localuri {x args} {
     if {[llength $args] == 1} {
@@ -30,8 +47,9 @@ proc redir {defaults to args} {
     }
 
     set todict [H freeparse_url $to $defaults]	;# parse the destination URL
+    Debug.url {redir todict:$todict}
 
-    if {[dict exists $todict -query]} {
+    if {[dict exists $todict query]} {
 	foreach {n v} [Query flatten [Query parse $todict]] {
 	    dict set query $n $v
 	}
@@ -53,12 +71,12 @@ proc redir {defaults to args} {
 	}
     }
     if {$q ne {}} {
-	dict set todict -query [join $q &]
+	dict set todict query [join $q &]
     }
 
-    if {([dict get? $todict -host] ni [list "" [dict get? $defaults -host]])
-	|| ([dict get? $todict -port] ni [list "" [dict get? $defaults -port]])
-	|| ([dict get? $todict -scheme] ni [list "" [dict get? $defaults -scheme]])
+    if {([dict get? $todict host] ni [list "" [dict get? $defaults host]])
+	|| ([dict get? $todict port] ni [list "" [dict get? $defaults port]])
+	|| ([dict get? $todict scheme] ni [list "" [dict get? $defaults scheme]])
     } {
 	# this is a remote URL
 	set to [uri $todict]
