@@ -1,6 +1,7 @@
 # Hredir - redirection support for H
 Debug define url
 
+# uri - return a uri from a dict of fields
 proc uri {x args} {
     if {[llength $args] == 1} {
 	set args [lindex $args 0]
