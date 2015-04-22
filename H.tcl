@@ -124,7 +124,9 @@ package provide H 8.0
 
 # load minimal H components
 H::load Hrx.tcl Htx.tcl Herr.tcl Hredir.tcl Hurl.tcl
-H::load HWS.tcl
+catch {
+    H::load HWS.tcl
+}
 
 # more H - fill in some useful higher level functions
 namespace eval H {
