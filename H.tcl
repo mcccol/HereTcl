@@ -38,6 +38,7 @@ if {[catch {
     Debug define entity
     Debug define cache
     Debug define process
+    Debug define tls
 }
 
 # define [dict get?] because it's *so* useful
@@ -594,6 +595,10 @@ namespace eval H {
     proc Pipeline {opts socket ipaddr rport} {
 	try {
 	    Debug.listener {Pipeline $opts $socket $ipaddr $rport}
+	    if {[dict exists $opts tls] && [dict size [dict get $opts tls]]} {
+		Debug.tls {TLS local: [::tls::status -local $socket]}
+		Debug.tls {TLS remote: [::tls::status $socket]}
+	    }
 
 	    # set up socket encoding and translation - it should never change
 	    chan configure $socket -encoding binary -translation {binary binary} -buffering none
@@ -650,6 +655,10 @@ namespace eval H {
 	}
     }
 
+    proc tls_debug {args} {
+	Debug.tls {$args}
+    }
+
     # listen - on nominated port
     proc listen {args} {
 	if {[llength $args]%2} {
@@ -667,21 +676,41 @@ namespace eval H {
 	# look for tls opts
 	if {[dict exists $args tls] && [dict size [dict get $args tls]]} {
 	    # do something with TLS
+	    # Generating SSL key:
+	    #  openssl genrsa -out server-private.pem 1024
+	    #  openssl req -new -x509 -key server-private.pem -out server-public.pem -days 365 
+
 	    package require tls
-	    set tls [dict merge {
-		-certfile server-public.pem
-		-keyfile server-private.pem
-		-cadir .
-		-cafile ca.pem
+	    set tls [dict merge [subst {
+		-certfile [file join [dict get $args home] CA server-public.pem]
+		-keyfile [file join [dict get $args home] CA server-private.pem]
+		-cadir [file join [dict get $args home] CA]
 		-require 0
 		-request 0
 		-ssl3 0
+		-ssl2 0
 		-tls1 1
-	    } [dict get $args tls]]
+		-tls1.1 1
+		-tls1.2 1
+	    }] [dict get $args tls]]
+	    dict set tls -server 1
+	    dict set tls -command ::H::tls_debug
+	    Debug.tls {TLS '[::tls::version]': ($tls) [incr ::tls::debug]}
+	    ::tls::init {*}$tls 
 	    set socket_cmd ::tls::socket
+
+	    set protocols {}
+	    foreach protocol {ssl2 ssl3 tls1 tls1.1 tls1.2} {
+		try {
+		    set ciphers [::tls::ciphers $protocol]
+		} on error {e eo} {
+		} on ok {} {
+		    lappend protocols $protocol
+		}
+	    }
+	    Debug.tls {TLS supports protocols: $protocols}
 	} else {
 	    set socket_cmd ::socket
-	    set tls {}
 	}
 
 	# provide access_log_fd to Tx
@@ -700,7 +729,7 @@ namespace eval H {
 	# start the listener
 	Debug.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}
 	try {
-	    set socket [$socket_cmd -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] {*}$tls $port]
+	    set socket [$socket_cmd -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
 	} trap {POSIX EADDRINUSE} {e eo} {
 	    puts stderr "LISTENER ERROR: [dict filter $args key -*] port $port is already in use"
 	    exit

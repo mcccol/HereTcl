@@ -244,7 +244,7 @@ Direct create Dispatcher {
 	}
     }
 
-    method / {r} {
+    method / {r args} {
 	set fossil ""
 	foreach f [lsort [array names ::fossil_server]] {
 	    append fossil <li> "<a href='/h/$f'>$f</a>" </li> \n
@@ -274,6 +274,8 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     set port 8080	;# this is the port on which the server will listen
     set root $home	;# by default this is where the server will look for files
     set fossil {}	;# default fossil commands
+    set tls {}		;# no tls by default
+
     variable {*}$argv
 
     # these are fossil-args - handled by the fossil passthru guff
@@ -321,13 +323,16 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 
 # start the H server's listener
 set largs {}				;# accumulate some arguments to the [H listen] command
+lappend largs home $home
 lappend largs dispatch {Dispatcher do}	;# H will dispatch requests to dispatch for processing
 lappend largs wsprocess {Dispatcher ws}	;# H will dispatch websocket upgrades to wsprocess for processing
-lappend largs tls {}			;# no TLS by default
-#lappend largs tls [list -require 0 -certfile server.crt -keyfile server.key -cadir $home]	;# for TLS - certs in $home
+lappend largs tls $tls	;# for TLS - certs in $home
+
 #lappend largs access_log_fd stdout
 package require Logchan
 lappend largs access_log_fd [Logchan open [pwd]/access.log daily 1]
+
+puts stderr "H listening $largs"
 
 set ::listener [H listen {*}$largs $::port]	;# create a listener on $::port
 puts stderr "H listening on port $::port"
