@@ -138,7 +138,7 @@ variable echo [subst {
 # specifying the command prefix to [H listener] as the 'dispatch' argument.
 # HereTcl invokes {*}$dispatch $R, where $R is the (unprocessed) request dict.
 # The dispatch command's result is (by default) sent back to the client as a reply.
-Direct create Dispatcher {
+Direct create Dispatcher rootname 0 {
     method /home {r} {
 	return [home do $r]
     }
@@ -242,6 +242,11 @@ Direct create Dispatcher {
 	} else {
 	    return [H NotFound $r]
 	}
+    }
+
+    method /*.ico {r args} {
+	puts stderr "/*.ico - ($r)"
+	return [H Ok $r content-type image/png ""]
     }
 
     method / {r args} {

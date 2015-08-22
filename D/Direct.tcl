@@ -110,17 +110,34 @@ oo::class create Direct {
 	set fn $suffix
 	set cprefix {}
 	set fprefix {}
-	foreach el [split [H armour $fn] /] {
-	    lappend cprefix [file rootname $el]
-	    lappend fprefix $el
+
+	variable rootname
+	if {$rootname} {
+	    foreach el [split [H armour $fn] /] {
+		lappend cprefix [file rootname $el]
+		lappend fprefix $el
+	    }
+	} else {
+	    foreach el [split [H armour $fn] /] {
+		lappend cprefix $el
+		lappend fprefix $el
+	    }
 	}
 
 	set extra {}
 	set cmd ""
+	set key_probe /[join $cprefix /]
 	variable methods
+	Debug.direct {Matching ($cprefix) in ([dict keys $methods])}
 	while {$cmd eq "" && [llength $cprefix]} {
-	    Debug.direct {searching for ($cprefix) in ($methods)}
-	    set probe [dict keys $methods /[join $cprefix /]]
+	    Debug.direct {searching for '/[join $cprefix /]' in ($methods)}
+	    #set probe [dict keys $methods /[join $cprefix /]]
+	    set probe {}
+	    foreach key [dict keys $methods] {
+		if {[string match $key $key_probe]} {
+		    lappend probe $key
+		}
+	    }
 	    # this strict match can only have 1 or 0 results
 	    if {[llength $probe] == 1} {
 		set cmd $probe
@@ -359,6 +376,7 @@ oo::class create Direct {
 	variable mount /
 	variable complain 0	;# complain if a named parameter doesn't exist?
 	variable parameters 1	;# bother unpacking parameters?
+	variable rootname 1	;# ignore anything but rootname in URL path elements
 	variable {*}$args
 	variable passthru {}	;# experimental - list of passthru URLs
 
