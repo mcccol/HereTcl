@@ -587,7 +587,9 @@ namespace eval H {
 	set size [expr {[dict exists $r -reply -size]?[dict get $r -reply -size]:0}]
 	set referer [dict get? $r referer]
 	set agent [dict get? $r user-agent]
-	puts $access_log_fd [format {%s - - [%s] "%s" %d %d "%s" "%s"} $ipaddr $time $request $code $size $referer $agent]
+	set logline [format {%s - - [%s] "%s" %d %d "%s" "%s"} $ipaddr $time $request $code $size $referer $agent]
+	puts $access_log_fd $logline
+	return $logline
     }
 
     # Pipeline - listener passes control here, with a new socket
