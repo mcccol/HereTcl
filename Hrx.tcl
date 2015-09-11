@@ -832,7 +832,7 @@ proc Rx {args} {
 	    } else {
 		Debug.process {[info coroutine] Httpd $e}
 	    }
-	    $tx TxReply [TimeOut $R] TIMEOUT		;# transmit the timeout
+	    #$tx TxReply [TimeOut $R] TIMEOUT		;# transmit the timeout
 	    break
 	} trap SUSPEND {} {
 	    # keep processing more input - this dispatcher has suspended and will handle its own response

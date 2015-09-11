@@ -130,7 +130,7 @@ oo::class create Direct {
 	variable methods
 	Debug.direct {Matching ($cprefix) in ([dict keys $methods])}
 	while {$cmd eq "" && [llength $cprefix]} {
-	    Debug.direct {searching for '/[join $cprefix /]' in ($methods)}
+	    Debug.direct {searching for '/[join $cprefix /]' in ([dict keys $methods]) - $key_probe}
 	    #set probe [dict keys $methods /[join $cprefix /]]
 	    set probe {}
 	    foreach key [dict keys $methods] {
@@ -138,6 +138,7 @@ oo::class create Direct {
 		    lappend probe $key
 		}
 	    }
+
 	    # this strict match can only have 1 or 0 results
 	    if {[llength $probe] == 1} {
 		set cmd $probe
@@ -148,6 +149,7 @@ oo::class create Direct {
 	    set cprefix [lrange $cprefix 0 end-1]
 	    lappend extra [lindex $fprefix end]	;# remember trailing
 	    set fprefix [lrange $fprefix 0 end-1]
+	    set key_probe /[join $cprefix /]
 	}
 
 	# no match - use wildcard method
