@@ -4,6 +4,8 @@ variable do_not_encode {image binary}	;# support these char encodings
 variable buffering_size	1048576		;# how many bytes to read/send from files
 variable chunksize	1024		;# how big a chunk to send per chunk
 
+Debug define cookies
+
 variable tx_defaults [defaults {
     server_id "HereTcl [package present H]"
 }]
@@ -284,7 +286,7 @@ proc TxHeaders {socket reply} {
     # special case for cookies
     if {$cookies ne ""} {
 	foreach c $cookies {
-	    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header set-cookie: $c}
+	    Debug.cookies {[info coroutine]/[dict get $reply -transaction] Tx Header set-cookie: $c}
 	    chan puts -nonewline $socket "set-cookie: $c\x0d\x0a"
 	}
     }
