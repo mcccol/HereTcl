@@ -93,14 +93,19 @@ namespace eval H {
     # load - load an H package.
     proc load {args} {
 	variable home
+	variable loaded
 	set dir $home
 	#puts stderr "load from $dir ($args)"
 	foreach a $args {
+	    if {[dict exists $loaded $a]} continue
 	    if {[string match #* $a]} continue
 	    if {[file pathtype $a] eq "relative"} {
-		set a [file join $dir $a]
+		set file [file join $dir $a]
+	    } else {
+		set file $a
 	    }
-	    source $a
+	    source $file
+	    dict set loaded $a $file
 	}
 
 	namespace export -clear *
@@ -128,6 +133,7 @@ H::load Hrx.tcl Htx.tcl Herr.tcl Hredir.tcl Hurl.tcl
 catch {
     H::load HWS.tcl
 }
+H::load Hc.tcl
 
 # more H - fill in some useful higher level functions
 namespace eval H {
