@@ -91,6 +91,7 @@ namespace eval H {
     }
 
     # load - load an H package.
+    variable loaded {}
     proc load {args} {
 	variable home
 	variable loaded
