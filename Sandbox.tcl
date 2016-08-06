@@ -289,6 +289,7 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 
 # locate fossil repos in the given fossil dirs and create a server per repo
 if {[info exists argv0] && ($argv0 eq [info script])} {
+    set ::env(FOSSIL_HOME) [file join $::home .fossil]
     # open_fossil - this thing just starts up concurrent fossil servers
     # for each fossil repo found in the fossil dirs given above
     apply {{args} {
