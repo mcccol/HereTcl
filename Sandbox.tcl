@@ -220,8 +220,9 @@ Direct create Dispatcher rootname 0 {
 
     # redirection test
     method /redir {r} {
-	return [H Redirect $r http://localhost:8080/redirected]
+	return [H Redirect $r http://[dict get $r -Url host]:[dict get $r -Url port]/redirected]
     }
+
     method /redirected {r} {
 	return [H Ok $r content-type text/html {<html>
 	    <body>
