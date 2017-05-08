@@ -335,7 +335,7 @@ namespace eval H {
 		    set rsp {}
 		}
 
-		dict set rsp -content <p>[H armour $message]</p>
+		dict set rsp -content $message
 		dict set rsp -code $code
 		set rsp [dict merge $rsp $args]
 		set rsp [NoCache $rsp]
@@ -659,7 +659,13 @@ namespace eval H {
 
 	    # from this point on, the coroutines have control of the socket
 	} on error {e eo} {
-	    Debug.error {Pipeline Failure: $e ($eo) opts:$opts socket:$socket ipaddr:$ipaddr rport:$rport}
+	    if {[dict exists $eo -debug]} {
+		set elevel [dict get $eo -debug]
+	    } else {
+		set elevel 0
+	    }
+
+	    Debug.error {Pipeline Failure: $e ($eo) opts:$opts socket:$socket ipaddr:$ipaddr rport:$rport} $elevel
 	} finally {
 	}
     }
@@ -725,6 +731,7 @@ namespace eval H {
 	# provide access_log_fd to Tx
 	if {[dict exists $args access_log]} {
 	    set access_log [dict get $args access_log]
+	    set access_log_fd [open $access_log a]
 	    dict unset args access_log
 	} elseif {[dict exists $args access_log_fd]} {
 	    set access_log_fd [dict get $args access_log_fd]

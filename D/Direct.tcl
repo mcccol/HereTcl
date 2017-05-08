@@ -106,6 +106,7 @@ oo::class create Direct {
     method Match {suffix {wild ""}} {
 	Debug.direct {Match ($suffix)}
 	set suffix [string trimleft $suffix /]
+
 	# strip extensions from each component
 	set fn $suffix
 	set cprefix {}
@@ -349,7 +350,7 @@ oo::class create Direct {
     }
 
     self method new {args} {
-	Debug.direct {Direct new $name $args}
+	Debug.direct {Direct [self] new $name $args}
 	set body [lindex $args end]
 	set args [lrange $args 0 end-1]
 	set obj [next {*}$args]
@@ -360,8 +361,9 @@ oo::class create Direct {
 	return $obj
     }
 
+    # create an object of type Direct
     self method create {name args} {
-	Debug.direct {Direct create $name $args}
+	Debug.direct {Direct [self] create $name $args}
 	set body [lindex $args end]
 	set args [lrange $args 0 end-1]
 	set obj [next $name {*}$args]

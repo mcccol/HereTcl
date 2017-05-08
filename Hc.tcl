@@ -84,23 +84,26 @@ proc Cx {args} {
     set sent 0		;# how many packets have we sent?
     set pending {}	;# requests queued before connection
     set callbacks {}	;# request callbacks pending responses
-
+    set direction client
     try {
 	while {[chan pending output $socket] != -1} {
 	    set rest [lassign [::yieldm $sent] op]			;# wait for READ event
-	    Debug.client {CX [info coroutine] got op $op}
+	    Debug.client {CX [info coroutine] got op '$op'}
 
 	    switch -- $op {
 		connected {
 		    # we have established an async connection
 		    after cancel $timer
+		    set rest [lassign $rest reader]
+		    Debug.client {connected to $socket starting '$reader'}
+		    after 0 $reader
 		    chan configure $socket -blocking 0 -encoding binary -translation binary -buffering none
 		    chan event $socket writable {}				;# turn off the writable event now
 		    chan event $socket readable $rx	;# trigger us whenever input becomes available
 		    incr connected
 		    foreach el $pending {
-			set rest [lassign $el method url]
-			CxSend $socket $method $url {*}$args		;# send anything which is pending connection
+			set urlrest [lassign $el method url]
+			after 0 [list CxSend $socket $method $url {*}$urlrest]		;# send anything which is pending connection
 		    }
 		}
 
@@ -141,6 +144,7 @@ proc Cx {args} {
 		
 		reply {
 		    set rest [lassign $rest r]
+		    Debug.client {[info coroutine] reply ($r) / ($rest)}
 		    set r [Header $r 1]		;# fetch request/status line
 		    set r [RxHeaders $r]	;# fetch all remaining headers
 		    set r [CxCheck $r]		;# parse $headers as a complete request header
@@ -164,7 +168,13 @@ proc Cx {args} {
 	    }
 	}
     } on error {e eo} {
-	Debug.error {[info coroutine] Tx $socket ERROR '$e' ($eo)}
+	if {[dict exists $eo -debug]} {
+	    set elevel [dict get $eo -debug]
+	} else {
+	    set elevel 0
+	}
+
+	Debug.error {[info coroutine] Tx $socket ERROR '$e' ($eo)} $elevel
     } finally {
 	catch {chan close $socket write}
     }
@@ -240,6 +250,8 @@ proc speak {args} {
 	return -options $eo $e
     }
 
+    Debug.client {Opened socket $socket}
+
     set namespace [namespace current]
     set Cx ${namespace}::C::$socket 
     set Rx ${namespace}::R::$socket
@@ -250,12 +262,11 @@ proc speak {args} {
     }
 
     set timer [after $timeout [list $Cx conn_fail]]
-
     set args [dict merge $args [list port $port host $host socket $socket]]
     ::coroutine $Cx $namespace Cx {*}$args rx $Rx timer $timer	;# create Rx coro around H::Rx command
-    ::coroutine $Rx $namespace Rx dispatch [list $Cx reply] {*}$args tx $Cx	;# create coro for client
+    set reader [list ::coroutine $Rx $namespace Rx dispatch [list after 0 [list $Cx reply]] {*}$args tx $Cx]	;# create coro for client
 
-    chan event $socket writable [list $Cx connected]	;# await connection
+    chan event $socket writable [list $Cx connected $reader]	;# await connection
 
     return $Cx
 }

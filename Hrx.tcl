@@ -768,6 +768,7 @@ proc Rx {args} {
 
     set args [dict merge $rx_defaults $args]
     set cleanup {}
+    Debug.listener {[info coroutine] start Rx $args}
     dict with args {}; unset args	;# install rx state vars
 
     set hold 0	;# a SUSPENDed process can hold us alive
@@ -780,7 +781,6 @@ proc Rx {args} {
 	{*}$onconnect [info coroutine] [info locals]
     }
 
-    Debug.listener {[info coroutine] start Rx $args}
     if {[info exists tls] && [dict size $tls]} {
 	#tls::handshake $socket	;# generate an error if the handshake failed - it'll be picked up below
 	Debug.listener {[info coroutine] tls::status [tls::status $socket]}
@@ -817,7 +817,7 @@ proc Rx {args} {
 	} on ok {} {
 	    Debug.process {[info coroutine] Dispatch: OK ([set __x $R; dict set __x -reply -content @elided@; set __x]) - READABLE [chan event $socket readable]}
 	    dict set Trace $transaction [dict get? $R -Header full]
-	    $tx TxReply $R OK		;# finally, transmit the response
+	    after 0 [list $tx TxReply $R OK]		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
 	    Debug.process {[info coroutine] Httpd $e}
@@ -879,7 +879,13 @@ proc Rx {args} {
 	    } trap HTTP {e eo} {
 		Debug.process {[info coroutine] WebSocket Httpd $e}
 	    } on error {e eo} {
-		Debug.error {[info coroutine] WebSocket Error '$e' ($eo)}
+		if {[dict exists $eo -debug]} {
+		    set elevel [dict get $eo -debug]
+		} else {
+		    set elevel 0
+		}
+
+		Debug.error {[info coroutine] WebSocket Error '$e' ($eo)} $elevel
 		$tx TxReply [ServerError $R $e $eo] WebSocket Error		;# transmit the error
 	    }
 	} trap CLOSE {e eo} {
@@ -897,7 +903,12 @@ proc Rx {args} {
 	    Trace passthru
 	    break
 	} on error {e eo} {
-	    Debug.error {[info coroutine] Error '$e' ($eo)}
+	    if {[dict exists $eo -debug]} {
+		set elevel [dict get $eo -debug]
+	    } else {
+		set elevel 0
+	    }
+	    Debug.error {[info coroutine] Error '$e' ($eo)} $elevel
 	    $tx TxReply [ServerError $R $e $eo] Error		;# transmit the error
 	}
     }
@@ -932,7 +943,12 @@ proc Rx {args} {
 	    try {
 		{*}$ondisconnect [info coroutine] [info locals]
 	    } on error {e eo} {
-		Debug.error {ondisconnect '$e' ($eo)}
+		if {[dict exists $eo -debug]} {
+		    set elevel [dict get $eo -debug]
+		} else {
+		    set elevel 0
+		}
+		Debug.error {ondisconnect '$e' ($eo)} $elevel
 	    }
 	}
 
@@ -940,7 +956,12 @@ proc Rx {args} {
 	    try {
 		{*}$cleanup [info coroutine]
 	    } on error {e eo} {
-		Debug.error {cleanup '$e' ($eo)}
+		if {[dict exists $eo -debug]} {
+		    set elevel [dict get $eo -debug]
+		} else {
+		    set elevel 0
+		}
+		Debug.error {cleanup '$e' ($eo)} $elevel
 	    }
 	}
     }

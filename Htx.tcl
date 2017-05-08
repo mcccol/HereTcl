@@ -896,7 +896,12 @@ proc Tx {args} {
 	    }
 	}
     } on error {e eo} {
-	Debug.error {[info coroutine] Tx $socket ERROR '$e' ($eo)}
+	if {[dict exists $eo -debug]} {
+	    set elevel [dict get $eo -debug]
+	} else {
+	    set elevel 0
+	}
+	Debug.error {[info coroutine] Tx $socket ERROR '$e' ($eo)} $elevel
     } on return {e eo} {
 	Debug.httpdtxlow {[info coroutine] Tx $socket RETURN '$e' ($eo)}
     } on continue {e eo} {

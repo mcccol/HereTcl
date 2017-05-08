@@ -93,8 +93,13 @@ oo::class create File {
 	# handle conditional request
 	if {[dict exists $r if-modified-since]} {
 	    set since [H DateInSeconds [dict get $r if-modified-since]]
-	    if {[file mtime $path] <= $since} {
-		Debug.file {NotModified: $path - [H Date [file mtime $path]] < [dict get $r if-modified-since]}
+	    try {
+		file mtime $path
+	    } on error {e eo} {
+		set mtime 0
+	    } on ok {mtime} {}
+	    if {$mtime <= $since} {
+		Debug.file {NotModified: $path - [H Date $mtime] < [dict get $r if-modified-since]}
 		Debug.file {if-modified-since: not modified}
 		return [H NotModified $r]
 	    }
@@ -116,7 +121,12 @@ oo::class create File {
 	    }
 
 	    # set the file mod time
-	    set mtime [file mtime $path]
+	    try {
+		file mtime $path
+	    } on error {e eo} {
+		set mtime 0
+	    } on ok {mtime} {}
+	    
 	    dict set r -reply last-modified [H Date $mtime]
 	} on error {e eo} {
 	    Debug.file {Error $e ($eo)}
