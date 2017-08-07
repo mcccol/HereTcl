@@ -651,11 +651,11 @@ namespace eval H {
 	    variable sockets
 	    ::coroutine $Tx $namespace Tx {*}$tx rx $Rx	direction output;# create Tx coro around H::Tx command
 	    dict set sockets $socket output $Tx start
-	    trace add command $Tx delete [list H::corodead output $socket]
+	    trace add command $Tx delete [namespace code [list corodead output $socket]]
 
 	    ::coroutine $Rx $namespace Rx {*}$rx tx $Tx	direction input;# create Rx coro around H::Rx command
 	    dict set sockets $socket input $Rx start
-	    trace add command $Rx delete [list H::corodead input $socket]
+	    trace add command $Rx delete [namespace code [list corodead input $socket]]
 
 	    # from this point on, the coroutines have control of the socket
 	} on error {e eo} {
@@ -760,10 +760,12 @@ namespace eval H {
     namespace ensemble create -subcommands {}
 
     namespace eval R {
-	namespace import [namespace parent]::*
+	#namespace import [namespace parent]::*
+	namespace path [namespace parent]
     }
     namespace eval T {
-	namespace import [namespace parent]::*
+	#namespace import [namespace parent]::*
+	namespace path [namespace parent]
     }
 }
 

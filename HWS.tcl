@@ -33,6 +33,7 @@ namespace eval ws {
 		    if {[dict get $message type] eq "text"} {
 			dict set message payload [encoding convertto utf-8 [dict get $message payload]]
 		    }
+
 		    corovar wsprocess; {*}$wsprocess [dict get $message type] $message
 		    unset message
 		}
@@ -56,9 +57,11 @@ namespace eval ws {
 			dict set frame payload $payload
 			dict set frame type binary
 		    }
+
 		    corovar wsprocess; {*}$wsprocess [dict get $frame type] $frame
 		} elseif {![info exists message]} {
 		    set message $frame
+
 		    if {$opcode == 1} {
 			dict set message type text
 		    } else {
@@ -66,7 +69,7 @@ namespace eval ws {
 		    }
 		    dict set message payload $payload
 		} else {
-		    error "Received new text/binary frame inside fragmented message"
+		    error "Received new text/binary frame inside fragmented message frame:($frame) message:($message)"
 		}
 	    }
 	    
@@ -115,8 +118,15 @@ namespace eval ws {
 		
 		if {![info exists closed]} {
 		    corovar socket
-		    puts -nonewline $socket [binary format aca* \x8A [dict get $frame ll] $payload]
+		    try {
+			binary format aca* \x8A [dict get $frame ll] $payload
+		    } on ok {pong} {
+			puts -nonewline $socket $pong
+		    } on error {e eo} {
+			Debug.error {[info coroutine] WebSocket erroneous PING received ($frame) '$e' ($eo)}
+		    }
 		}
+
 		corovar wsprocess; {*}$wsprocess ping $frame
 	    }
 	    
@@ -144,7 +154,7 @@ namespace eval ws {
 	    }
 
 	    default {
-		error "Invalid frame opcode [dict get $frame opcode]"
+		error "Invalid frame opcode [dict get $frame opcode] ($frame)"
 	    }
 	}
     }
@@ -164,16 +174,18 @@ namespace eval ws {
 	set in [chan read $socket $incoming(req)]
 	Debug.websocket {[info coroutine] WebSocket read_frame read '[binary encode hex $in]' [string length $in]: [array get incoming]}
 	corovar stream; append stream $in
-	#Debug.websocket {$incoming(req) > 0 && $incoming(offset)+$incoming(req) <= [string length $stream]}
 
+	#Debug.websocket {$incoming(req) > 0 && $incoming(offset)+$incoming(req) <= [string length $stream]}
 	while {$incoming(req) > 0 && $incoming(offset)+$incoming(req) <= [string length $stream]} {
 	    switch -- $incoming(state) {
 		"" {
 		    # initial frame header
-		    set r1 [binary scan [string range $stream 0 1] B4X1h1B1X1cu1 bits incoming(opcode) incoming(mask) incoming(len)]
+		    set r1 [binary scan [string range $stream 0 1] B4X1h1B1X1cu1 bits incoming(opcode) incoming(masked) incoming(len)]
 		    lassign [split $bits ""] incoming(fin) incoming(rsv1) incoming(rsv2) incoming(rsv3)
 		    Debug.websocket {[info coroutine] WebSocket read_frame decoding $r1 [binary encode hex $stream]: [array get incoming]}
-
+		    if {$incoming(rsv1) || $incoming(rsv2) || $incoming(rsv3)} {
+			error "[info coroutine] WebSocket $bits has reserved bits set"
+		    }
 		    set incoming(len) [expr {$incoming(len) & 0x7F}] ;# and off 'mask' bit
 		    set incoming(ll) [binary format cu $incoming(len)]	;# keep the length stream in case we have a ping
 		    set incoming(opcode) [string toupper $incoming(opcode)]
@@ -186,16 +198,16 @@ namespace eval ws {
 			set incoming(state) paylen64
 			set incoming(req) 8
 		    } else {
-			set incoming(state) payload
-			set incoming(req) 0
+			if {$incoming(masked)} {
+			    set incoming(state) mask
+			    set incoming(req) 4
+			} else {
+			    set incoming(state) payload
+			    set incoming(req) 0
+			    unset incoming(masked)
+			}
 		    }
 
-		    if {$incoming(mask)} {
-			set incoming(state) mask
-			incr incoming(req) 4
-		    } else {
-			unset incoming(mask)
-		    }
 		    Debug.websocket {[info coroutine] WebSocket read_frame decoded $r1 [binary encode hex $stream]: [array get incoming]}
 		}
 
@@ -205,13 +217,15 @@ namespace eval ws {
 		    binary scan $input Su1 num
 		    incr incoming(offset) 2
 
-		    set incoming(len) [expr {$incoming(len) << 16 | $num}]
-		    if {$incoming(mask)} {
+		    #set incoming(len) [expr {$incoming(len) << 16 | $num}]
+		    set incoming(len) $num
+		    if {$incoming(masked)} {
 			set incoming(state) mask
+			set incoming(req) 4
 		    } else {
-			set incoming(req) 0
 			set incoming(state) payload
-			unset incoming(mask)
+			set incoming(req) 0
+			unset incoming(masked)
 		    }
 		    Debug.websocket {[info coroutine] WebSocket read_frame paylen16 [binary encode hex $stream]: [array get incoming]}
 		}
@@ -222,24 +236,28 @@ namespace eval ws {
 		    binary scan $input W1 num
 		    incr incoming(offset) 8
 
-		    set incoming(len) [expr {$incoming(len) << 64 | $num}]
-		    if {$incoming(mask)} {
+		    #set incoming(len) [expr {$incoming(len) << 64 | $num}]
+		    set incoming(len) $num
+		    if {$incoming(masked)} {
 			set incoming(state) mask
+			incr incoming(req) 4
 		    } else {
-			set incoming(req) 0
 			set incoming(state) payload
-			unset incoming(mask)
+			set incoming(req) 0
+			unset incoming(masked)
 		    }
 		    Debug.websocket {[info coroutine] WebSocket read_frame paylen64 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		mask {
-		    binary scan [string range $stream $incoming(offset) end] cu4 incoming(mask)
+		    if {[binary scan [string range $stream $incoming(offset) end] cu4 incoming(mask)] != 1} {
+			error "[info coroutine] WebSocket read_frame mask could not read mask-long '[binary encode hex $stream]': [array get incoming"
+		    }
 		    incr incoming(offset) 4
 
-		    set incoming(req) 0
 		    set incoming(state) payload
-		    Debug.websocket {[info coroutine] WebSocket read_frame mask [binary encode hex $stream]: [array get incoming]}
+		    set incoming(req) 0
+		    Debug.websocket {[info coroutine] WebSocket read_frame mask '[binary encode hex $stream]': [array get incoming]}
 		}
 
 		payload {
@@ -287,10 +305,10 @@ namespace eval ws {
 		    set frame [read_frame $socket]
 
 		    if {[dict size $frame]} {
-			# valid frame
+			# valid(ish) frame
 			if {[dict get $frame len]} {
+			    dict set frame req [dict get $frame len]	;# we want this much payload
 			    Readable $socket [info coroutine] payload	;# move to payload reading state
-			    dict set frame req [dict get $frame len]
 			    Debug.websocket {[info coroutine] WebSocket active read ($frame)}
 			} else {
 			    # we have 0 length payload - keep reading frames while processing this one
@@ -308,17 +326,17 @@ namespace eval ws {
 		    append payload $bytes
 		    dict incr frame req -[string length $bytes]
 		    Debug.websocket {[info coroutine] WebSocket payload ($frame)}
+
 		    if {[dict get $frame req]} {
-			# keep reading payload
+			# keep reading payload, there's more to come
 		    } else {
 			# have read complete payload - go back to reading frame
 			if {[dict exists $frame mask]} {
 			    # get mask bytes
 			    set mask [dict get $frame mask]
-			    Debug.websocket {[info coroutine] WebSocket payload mask $mask ($frame)}
-			    set i -1
-			    
 			    binary scan $payload cu* payload
+			    Debug.websocket {[info coroutine] WebSocket payload mask '$mask' ($frame) payload: ($payload)}
+			    set i -1
 			    set payload [binary format c* [lmap p $payload {
 				set i [expr {($i+1) % 4}]
 				expr {$p ^ [lindex $mask $i]}
