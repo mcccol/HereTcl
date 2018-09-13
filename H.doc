@@ -1,0 +1,20 @@
+= H - HTTP 1.1 Daemon
+
+H is a pure tcl implementation of HTTP 1.1 intended to be fairly feature-complete, spec conformant and performant.
+
+When run as a command, H performs some self-tests, which can also serve as examples.  These can be inspected at the end of the source.
+
+H contains its own network listener, created by [H listen].  The listener creates two coroutines to service a new connection.
+
+On connection, two coroutines are created to service the connected socket's input and output sides.
+
+The output coro [Tx] is called with an argument comprising the response dict.  Its primary function is to format up response dicts into HTTP wire format, and to deliver responses in order.  That is: Tx can be called with responses in any order, but will only send them in strict order of reception.
+
+The input coro [Rx] reads and decodes HTTP request fields and stores them a dict [request dict].  If an HTTP entity is present in the input stream, it is read and stored in the -entity element of the request dict.
+
+Non-HTTP headers created by Rx:
+    -entity - the entity read (if any)
+    -Header - dict-decoded first request line, comprising elements: method full version uri
+    -Url - the dict-decoded Header uri, comprising: host port path scheme authority fragment query
+
+Additionally the -cache-control, -pragma and -etag fields are created from the eponymous request fields, which are moved aside because they are also relevant in reply, and must be moved aside.
