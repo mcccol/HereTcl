@@ -23,22 +23,23 @@ if {[catch {
 }]} {
     proc ::Debug {args} {}	;# make dummy empty debug
     foreach tag {error httpd listener httpdlow httpdtx httpdtxlow entity cache cookies} {
-	interp alias {} Debug.$tag {} ::Debug
+	interp alias {} Debug.H.$tag {} ::Debug
     }
 } else {
     Debug on error
-    Debug define httpd
-    Debug define process
-    Debug define passthru
-    Debug define listener
-    Debug define httpdlow
-    Debug define httpdbad
-    Debug define httpdtx
-    Debug define httpdtxlow
-    Debug define entity
-    Debug define cache
-    Debug define process
-    Debug define tls
+    Debug define H.httpd
+    Debug define H.process
+    Debug define H.passthru
+    Debug define H.listener
+    Debug define H.httpdlow
+    Debug define H.httpdbad
+    Debug define H.httpdtx
+    Debug define H.httpdtxlow
+    Debug define H.entity
+    Debug define H.cache
+    Debug define H.process
+    Debug define H.tls
+    Debug define H.CORS
 }
 
 # define [dict get?] because it's *so* useful
@@ -143,8 +144,8 @@ namespace eval H {
 	if {[string is integer -strict $date]} {
 	    return $date
 	} elseif {[catch {clock scan $date \
-			-format {%a, %d %b %Y %T GMT} \
-			-gmt true} result eo]
+			      -format {%a, %d %b %Y %T GMT} \
+			      -gmt true} result eo]
 	      } {
 	    #error "DateInSeconds '$date', ($result)"
 	    return 0	;# oldest possible date
@@ -193,19 +194,27 @@ namespace eval H {
     }
 
     # rxCORS - respond to CORS request with 
-    proc rxCORS {r} { 
+    proc rxCORS {{r {}}} { 
 	if {[dict get $r -Header method] eq "OPTIONS"
 	    && [dict exists $r access-control-request-method]} {
 	    # simplistic CORS response
 	    dict set r -reply access-control-allow-origin *
-	    dict set r -reply access-control-allow-methods "POST, GET, OPTIONS"
+	    dict set r -reply access-control-allow-methods "POST, GET, OPTIONS, HEAD"
 	    dict set r -reply access-control-max-age 1000
 	    dict set r -reply access-control-allow-headers *
 	    dict set r -reply -code 200
-
+	    
 	    #tx_$socket $r	;# send the CORS response
-
+	    Debug.H.CORS {CORS response: ($r)}
 	    return -code return $r	;# no more processing
+	} else {
+	    # this is a normal request - return some CORS stuff
+	    return {
+		access-control-allow-origin *
+		access-control-allow-methods "POST, GET, OPTIONS, HEAD"
+		access-control-max-age 1000
+		access-control-allow-headers *
+	    }
 	}
     }
     
@@ -221,16 +230,16 @@ namespace eval H {
 		# it's an age
 		if {$age != 0} {
 		    dict set rsp expires [Date [expr {[clock seconds] + $age}]]
-		    Debug.caching {Http Cache: numeric age expires '[dict get $rsp expires]'}
+		    Debug.H.caching {Http Cache: numeric age expires '[dict get $rsp expires]'}
 		} else {
-		    Debug.caching {Http Cache: turn off expires}
+		    Debug.H.caching {Http Cache: turn off expires}
 		    catch {dict unset rsp expires}
 		    catch {dict unset rsp -expiry}
 		}
 	    } else {
 		dict set rsp -expiry $age	;# remember expiry verbiage for caching
 		dict set rsp expires [Date [clock scan $age]]
-		Debug.caching {Http Cache: text age expires '$age' - '[dict get $rsp expires]'}
+		Debug.H.caching {Http Cache: text age expires '$age' - '[dict get $rsp expires]'}
 		set age [expr {[clock scan $age] - [clock seconds]}]
 	    }
 
@@ -247,7 +256,7 @@ namespace eval H {
 	    }
 	}
 
-	Debug.caching {Http Cache: ($age) cache-control: [dict get? $rq -reply cache-control]}
+	Debug.H.caching {Http Cache: ($age) cache-control: [dict get? $rq -reply cache-control]}
 	return $rq
     }
 
@@ -328,7 +337,7 @@ namespace eval H {
 
     # construct an HTTP Bad response
     proc Bad {rq message {code 400} args} {
-	Debug.httpdbad {BAD: $message $code ($rq) caller:'[info level -1]'}
+	Debug.H.httpdbad {BAD: $message $code ($rq) caller:'[info level -1]'}
 	if {[dict exists $rq -Header full]} {
 	    dict update rq -reply rsp {
 		if {![info exists rsp]} {
@@ -397,7 +406,7 @@ namespace eval H {
 
     # copydone - end of passthru
     proc copydone {coro input output dir args} {
-	Debug.passthru {$input->$output PASSTHRU DONE: $dir $args input:([sstate $input]) / output: ([sstate $output])}
+	Debug.H.passthru {$input->$output PASSTHRU DONE: $dir $args input:([sstate $input]) / output: ([sstate $output])}
 	try {
 	    chan close $input read
 	} on error {e eo} {
@@ -410,7 +419,7 @@ namespace eval H {
 	    puts stderr "closing $output output '$e' ($eo)"
 	}
 
-	Debug.passthru {$input->$output PASSTHRU DONE2: $dir $args input:([sstate $input]) / output: ([sstate $output])}
+	Debug.H.passthru {$input->$output PASSTHRU DONE2: $dir $args input:([sstate $input]) / output: ([sstate $output])}
     }
 
     # coroVars - debug coro
@@ -480,7 +489,7 @@ namespace eval H {
 	    } else {
 		set state live
 	    }
-		
+	    
 	    return [list socket $socket eof $eof in $inp out $outp ev $ev state $state]
 	}
     }
@@ -603,10 +612,10 @@ namespace eval H {
     # this is where the action happens
     proc Pipeline {opts socket ipaddr rport} {
 	try {
-	    Debug.listener {Pipeline $opts $socket $ipaddr $rport}
+	    Debug.H.listener {Pipeline $opts $socket $ipaddr $rport}
 	    if {[dict exists $opts tls] && [dict size [dict get $opts tls]]} {
-		Debug.tls {TLS local: [::tls::status -local $socket]}
-		Debug.tls {TLS remote: [::tls::status $socket]}
+		Debug.H.tls {TLS local: [::tls::status -local $socket]}
+		Debug.H.tls {TLS remote: [::tls::status $socket]}
 	    }
 
 	    # set up socket encoding and translation - it should never change
@@ -671,7 +680,7 @@ namespace eval H {
     }
 
     proc tls_debug {args} {
-	Debug.tls {$args}
+	Debug.H.tls {$args}
     }
 
     # listen - on nominated port
@@ -710,7 +719,7 @@ namespace eval H {
 	    }] [dict get $args tls]]
 	    dict set tls -server 1
 	    dict set tls -command ::H::tls_debug
-	    Debug.tls {TLS '[::tls::version]': ($tls) [incr ::tls::debug]}
+	    Debug.H.tls {TLS '[::tls::version]': ($tls) [incr ::tls::debug]}
 	    ::tls::init {*}$tls 
 	    set socket_cmd ::tls::socket
 
@@ -723,7 +732,7 @@ namespace eval H {
 		    lappend protocols $protocol
 		}
 	    }
-	    Debug.tls {TLS supports protocols: $protocols}
+	    Debug.H.tls {TLS supports protocols: $protocols}
 	} else {
 	    set socket_cmd ::socket
 	}
@@ -743,7 +752,7 @@ namespace eval H {
 	dict set args access_log_fd $access_log_fd
 
 	# start the listener
-	Debug.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}
+	Debug.H.listener {server listening ([namespace code [list Pipeline $args]]) [dict filter $args key -*] $port}
 	try {
 	    set socket [$socket_cmd -server [namespace code [list Pipeline $args]] {*}[dict filter $args key -*] $port]
 	} trap {POSIX EADDRINUSE} {e eo} {

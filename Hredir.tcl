@@ -1,5 +1,5 @@
 # Hredir - redirection support for H
-Debug define url
+Debug define H.url
 
 # uri - return a uri from a dict of fields
 proc uri {x args} {
@@ -41,21 +41,20 @@ proc localuri {x args} {
 # provides a limited ability to add query $args
 # limits: overwrites existing args, ignores and removes duplicates
 proc redir {defaults to args} {
-    Debug.url {redir defaults:$defaults to:$to args:$args}
+    Debug.H.url {redir defaults:$defaults to:$to args:$args}
     #puts stderr "redir defaults:($defaults) to:$to args:$args"
     if {[llength $args] == 1} {
 	set args [lindex $args 0]
     }
 
     set todict [H freeparse_url $to $defaults]	;# parse the destination URL
-    Debug.url {redir todict:$todict}
+    Debug.H.url {redir todict:$todict}
 
+    set query {}
     if {[dict exists $todict query]} {
 	foreach {n v} [Query flatten [Query parse $todict]] {
 	    dict set query $n $v
 	}
-    } else {
-	set query {}
     }
 
     # parse args as additional -query elements
@@ -86,7 +85,7 @@ proc redir {defaults to args} {
 	set to [localuri $todict]
     }
 
-    Debug.url {redir to: $to}
+    Debug.H.url {redir to: $to}
     return $to
 }
 

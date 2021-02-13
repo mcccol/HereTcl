@@ -180,4 +180,3 @@ namespace eval Logchan {
     namespace export -clear *
     namespace ensemble create -subcommands {}
 }
-

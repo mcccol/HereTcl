@@ -1,7 +1,7 @@
 # Hclient - H's http client
-Debug define client
-#Debug on httpd
-#Debug on httpdlow
+Debug define H.client
+#Debug on H.httpd
+#Debug on H.httpdlow
 
 # CxSend - process a single reply
 proc CxSend {socket method url args} {
@@ -88,14 +88,14 @@ proc Cx {args} {
     try {
 	while {[chan pending output $socket] != -1} {
 	    set rest [lassign [::yieldm $sent] op]			;# wait for READ event
-	    Debug.client {CX [info coroutine] got op '$op'}
+	    Debug.H.client {CX [info coroutine] got op '$op'}
 
 	    switch -- $op {
 		connected {
 		    # we have established an async connection
 		    after cancel $timer
 		    set rest [lassign $rest reader]
-		    Debug.client {connected to $socket starting '$reader'}
+		    Debug.H.client {connected to $socket starting '$reader'}
 		    after 0 $reader
 		    chan configure $socket -blocking 0 -encoding binary -translation binary -buffering none
 		    chan event $socket writable {}				;# turn off the writable event now
@@ -110,20 +110,20 @@ proc Cx {args} {
 		conn_fail {
 		    # we have failed to get a connection
 		    if {!$connected} {
-			Debug.client {[info coroutine] Failed connection}
+			Debug.H.client {[info coroutine] Failed connection}
 		    } else {
 			Debug.error {[info coroutine] Spurious connection timeout - we are already connected.}
 		    }
 		}
 
 		closing {
-		    Debug.client {[info coroutine] Rx closing $rest}
+		    Debug.H.client {[info coroutine] Rx closing $rest}
 		}
 		
 		continue {
 		    # Rx indicating it needs a 100-Continue sent
 		    # special case 100-Continue - straight out the socket
-		    Debug.httpdtx {[info coroutine] Cx sending 100-Continue}
+		    Debug.H.httpdtx {[info coroutine] Cx sending 100-Continue}
 		    TxLine $socket "HTTP/1.1 100 Continue"
 		    TxLine $socket ""
 		}
@@ -139,17 +139,17 @@ proc Cx {args} {
 		
 		pending {
 		    # Rx has received the start of a command
-		    Debug.client {[info coroutine] Cx Pending $rest}
+		    Debug.H.client {[info coroutine] Cx Pending $rest}
 		}
 		
 		reply {
 		    set rest [lassign $rest r]
-		    Debug.client {[info coroutine] reply ($r) / ($rest)}
+		    Debug.H.client {[info coroutine] reply ($r) / ($rest)}
 		    set r [Header $r 1]		;# fetch request/status line
 		    set r [RxHeaders $r]	;# fetch all remaining headers
 		    set r [CxCheck $r]		;# parse $headers as a complete request header
 		    set r [RxEntity $r]		;# fetch any entity
-		    Debug.client {[info coroutine] reply ($r) / ($callbacks)}
+		    Debug.H.client {[info coroutine] reply ($r) / ($callbacks)}
 		    {*}[dict get $callbacks [dict get $r -transaction]] $r
 		    dict unset callbacks [dict get $r -transaction]
 		}
@@ -181,7 +181,7 @@ proc Cx {args} {
 }
 
 proc CxCheck {r} {
-    Debug.httpdlow {CxCheck $r}
+    Debug.H.httpdlow {CxCheck $r}
     # rfc2616 14.10:
     # A system receiving an HTTP/1.0 (or lower-version) message that
     # includes a Connection header MUST, for each connection-token
@@ -197,7 +197,7 @@ proc CxCheck {r} {
     }
 
     dict set r -Header state CxCheck
-    Debug.httpdlow {CxCheck done: $r}
+    Debug.H.httpdlow {CxCheck done: $r}
     return $r
 }
 
@@ -250,7 +250,7 @@ proc speak {args} {
 	return -options $eo $e
     }
 
-    Debug.client {Opened socket $socket}
+    Debug.H.client {Opened socket $socket}
 
     set namespace [namespace current]
     set Cx ${namespace}::C::$socket 

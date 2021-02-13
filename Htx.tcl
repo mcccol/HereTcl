@@ -4,7 +4,7 @@ variable do_not_encode {image binary}	;# support these char encodings
 variable buffering_size	1048576		;# how many bytes to read/send from files
 variable chunksize	1024		;# how big a chunk to send per chunk
 
-Debug define cookies
+Debug define H.cookies
 
 variable tx_defaults [defaults {
     server_id "HereTcl [package present H]"
@@ -101,7 +101,7 @@ proc TxLine {socket args} {
 	#chan puts -nonewline $ll ${line}\x0d\x0a
     }
     #chan close $ll
-    Debug.httpdtxlow {[info coroutine] TxLine: '$args' ([fconfigure $socket])}
+    Debug.H.httpdtxlow {[info coroutine] TxLine: '$args' ([fconfigure $socket])}
     # FIXME: refrain from sending too-long lines
 }
 
@@ -113,7 +113,7 @@ proc any-match {r etag} {
 
     set im [split [dict get $r if-none-match] ,]
     set result [expr {$etag in $im}]
-    Debug.cache {[info coroutine] any-match: $result - $etag in $im}
+    Debug.H.cache {[info coroutine] any-match: $result - $etag in $im}
     return $result
 }
 
@@ -125,7 +125,7 @@ proc if-match {r etag} {
 
     set im [split [dict get $r if-match] ,]
     set result [expr {$im eq "*" || $etag in $im}]
-    Debug.cache {[info coroutine] if-match: $result - $etag in $im}
+    Debug.H.cache {[info coroutine] if-match: $result - $etag in $im}
     return $result
 }
 
@@ -137,7 +137,7 @@ proc if-range {r etag} {
 
     set im [split [dict get $r if-range] ,]
     set result [expr {$im eq "*" || $etag in $im}]
-    Debug.cache {[info coroutine] if-match: $result - $etag in $im}
+    Debug.H.cache {[info coroutine] if-match: $result - $etag in $im}
     return $result
 }
 
@@ -238,7 +238,7 @@ proc TxRange {} {
 	# FIXME: multiple Range - this only does one
 	# FIXME: what about transfer-encoded (ie: gzipped) content?
 	# FIXME: what about a range over a file?
-	Debug.httpdtx {[info coroutine] ranges: $ranges}
+	Debug.H.httpdtx {[info coroutine] ranges: $ranges}
 	set ranges [lindex [lassign [split $ranges =] unit] 0]
 	set ranges [split $ranges ,]
 	set ranges [lindex $ranges 0]	;# only handle one range
@@ -261,7 +261,7 @@ proc TxRange {} {
 	dict set reply -range $range	;# record this for TxEntity
 	dict set reply content-range "bytes $from-$to/$size"
 	dict set reply content-length [expr {$to-$from+1}]
-	Debug.httpdtx {[info coroutine] range: [dict get $reply content-range] of length [dict get $reply content-length]}
+	Debug.H.httpdtx {[info coroutine] range: [dict get $reply content-range] of length [dict get $reply content-length]}
     }
 }
 
@@ -274,7 +274,7 @@ proc TxHeaders {socket reply} {
     foreach {n v} $reply {
 	if {$n eq "-set-cookies"} {set cookies $v}
 	if {[string index $n 0] eq "-"} continue
-	Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header $n: $v}
+	Debug.H.httpdtxlow {[info coroutine]/[dict get $reply -transaction] Tx Header $n: $v}
 	if {[dict exists $reply -Header multiple] && $n in [dict get $reply -Header multiple]} {
 	    foreach v1 $v {
 		chan puts -nonewline $socket "$n: $v1\x0d\x0a"
@@ -286,7 +286,7 @@ proc TxHeaders {socket reply} {
     # special case for cookies
     if {$cookies ne ""} {
 	foreach c $cookies {
-	    Debug.cookies {[info coroutine]/[dict get $reply -transaction] Tx Header set-cookie: $c}
+	    Debug.H.cookies {[info coroutine]/[dict get $reply -transaction] Tx Header set-cookie: $c}
 	    chan puts -nonewline $socket "set-cookie: $c\x0d\x0a"
 	}
     }
@@ -316,7 +316,7 @@ proc TxReadFile {fd tx {keep 0}} {
 	if {$data eq ""} return
 	tailcall $tx TxSend 0 $data	;# send the data to the client
     } on error {e eo} {
-	Debug.httptx {[info coroutine] TxReadFile '$e' ($eo)}
+	Debug.H.httptx {[info coroutine] TxReadFile '$e' ($eo)}
     }
 }
 
@@ -324,7 +324,7 @@ proc TxReadFile {fd tx {keep 0}} {
 proc TxFile {fd args} {
     set rq [lindex $args end]
     set args [lrange $args 0 end-1]
-    Debug.httpdtx {[info coroutine] TxFile ($args) - ($rq)}
+    Debug.H.httpdtx {[info coroutine] TxFile ($args) - ($rq)}
 
     dict update rq -reply reply -tx tx -socket socket {
 	set reply [dict merge $reply $args]
@@ -333,24 +333,24 @@ proc TxFile {fd args} {
 	set position [chan tell $fd]	;# initial fd position
 	if {$position == -1} {
 	    # this file is not seekable, it's a pure stream
-	    Debug.httpdtx {[info coroutine] TxFile - Content is a pure stream - chunking}
+	    Debug.H.httpdtx {[info coroutine] TxFile - Content is a pure stream - chunking}
 	    catch {dict unset reply content-length}		;# this is a stream, not a seekable file
 	    dict set reply transfer-encoding chunked		;# this stream must be sent chunked
 	} elseif {[dict exists $reply content-encoding]} {
 	    # we're going to gzip this thing, so we won't know its length
-	    Debug.httpdtx {[info coroutine] TxFile - Content is a seekable file, want GZIP - chunking}
+	    Debug.H.httpdtx {[info coroutine] TxFile - Content is a seekable file, want GZIP - chunking}
 	    catch {dict unset reply content-length}		;# we don't know the gzipped length
 	    dict set reply transfer-encoding chunked		;# this gzipped content must be sent chunked
 	} elseif {![dict exists $reply content-length]} {
 	    # not gzipping, is seekable - can/should know its length - set it
-	    Debug.httpdtx {[info coroutine] TxFile - Content is a seekable file, do not want GZIP - unknown content-length}
+	    Debug.H.httpdtx {[info coroutine] TxFile - Content is a seekable file, do not want GZIP - unknown content-length}
 	    chan seek $fd 0 end			;# move to the end of the file
 	    dict set reply content-length [expr {[chan tell $fd] - $position}]
 	    chan seek $fd $position start	;# move back to the old file position
 	    catch {dict unset reply transfer-encoding}
 	} else {
 	    # fd is in position, we have been given the length to send
-	    Debug.httpdtx {[info coroutine] TxFile - Content is a seekable file, do not want GZIP - known content-length}
+	    Debug.H.httpdtx {[info coroutine] TxFile - Content is a seekable file, do not want GZIP - known content-length}
 	}
 
 	TxHeaders $socket $reply	;# emit $reply's headers
@@ -379,7 +379,7 @@ proc TxFileCopyDone {r fd size {err ""}} {
     if {$err ne ""} {
 	Debug.error {[info coroutine] TxFileCopy failed '$err'}
     } else {
-	Debug.httpd {[info coroutine] TxFileCopy succeeded $size bytes}
+	Debug.H.httpd {[info coroutine] TxFileCopy succeeded $size bytes}
     }
 
     after 0 [list [dict get $r -tx] TxComplete]	;# signal Tx is good to resume or terminate
@@ -388,13 +388,13 @@ proc TxFileCopyDone {r fd size {err ""}} {
 
 # TxFileCopy - utility function to [chan copy] an open file
 proc TxFileCopy {fd args} {
-    Debug.httpdtx {[info coroutine] TxFileCopy $fd $args}
+    Debug.H.httpdtx {[info coroutine] TxFileCopy $fd $args}
     lassign [lreverse $args] r done
     if {$done eq ""} {
 	set done [namespace current]::TxFileCopyDone
     }
 
-    after idle [list ::apply {{r done fd size} {
+    after 1 [list ::apply {{r done fd size} {
 	[dict get $r -rx] PAUSE [info coroutine] 	;# pause the Rx coro, to permit [chan copy] it must be quiescent
 	
 	try {
@@ -403,7 +403,7 @@ proc TxFileCopy {fd args} {
 	    [dict get $r -rx] UNPAUSE [info coroutine] 	;# unpause the Rx coro
 	    return -code error -options $eo $e		;# propagate error to caller
 	} on ok {e eo} {
-	    Debug.httpd {[info coroutine] TxFileCopy started for $size bytes, ending with '$done'}
+	    Debug.H.httpd {[info coroutine] TxFileCopy started for $size bytes, ending with '$done'}
 	}
     }} $r $done $fd [dict get $r -reply content-length]]
 
@@ -423,7 +423,7 @@ proc TxComplete {args} {
     # completed a passthru or async response
     # this request is no longer pending
     corovar rq
-    Debug.process {[info coroutine]/[dict get $rq -transaction] Tx Complete}
+    Debug.H.process {[info coroutine]/[dict get $rq -transaction] Tx Complete}
 
     corovar gzipper
     if {[info exists gzipper]} {
@@ -448,14 +448,14 @@ proc TxTransmit {} {
     corovar rq
     corovar socket
 
-    Debug.httpdtx {[info coroutine] Tx sending ($rq)}
+    Debug.H.httpdtx {[info coroutine] Tx sending ($rq)}
     dict update rq -reply reply {
 	# ensure the reply code is set
 	if {![dict exists $reply -code]} {
 	    dict set reply -code [set code 200]	;# presume it's ok
 	} elseif {[set code [dict get $reply -code]] < 4} {
 	    # presume this was a tcl error code, not an HTTP code
-	    Debug.httpd {[info coroutine] Tx Tcl error code ($code)}
+	    Debug.H.httpd {[info coroutine] Tx Tcl error code ($code)}
 	    dict set reply -code [set code 500]
 	}
 
@@ -513,7 +513,7 @@ proc TxTransmit {} {
 		    set en [string tolower [string trim $en]]
 		    if {$en in $ce_encodings} {
 			dict set reply content-encoding $en	;# determined we want to encode/gzip
-			Debug.httpdtxlow {[info coroutine] TxTransmit determined Content encoding: $en}
+			Debug.H.httpdtxlow {[info coroutine] TxTransmit determined Content encoding: $en}
 			break
 		    }
 		}
@@ -535,7 +535,7 @@ proc TxTransmit {} {
     corovar server_id
     set rline [list "HTTP/1.1 $code $errmsg" "date: [Now]" "server: $server_id"]
     TxLine $socket {*}$rline
-    Debug.httpd {[info coroutine]/[dict get $reply -transaction] '[lindex $rline 0]' response to '[dict get? $reply -Header full]'}
+    Debug.H.httpd {[info coroutine]/[dict get $reply -transaction] '[lindex $rline 0]' response to '[dict get? $reply -Header full]'}
 
     if {$code in {204}} {
 	# declared contentless by application
@@ -566,14 +566,14 @@ proc TxTransmit {} {
 		if {[string length $gzip] < [string length [dict get $reply -content]]} {
 		    dict set reply -content $gzip	;# content becomes gzipped content
 		    dict set reply content-encoding gzip
-		    Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: zipping ($reply) - [string length [dict get $reply -content]] bytes}
+		    Debug.H.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: zipping ($reply) - [string length [dict get $reply -content]] bytes}
 		} else {
 		    # don't send gzipped if it is larger than original
 		    dict unset reply content-encoding
-		    Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Not zipping - pointless ($reply)}
+		    Debug.H.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Not zipping - pointless ($reply)}
 		}
 	    } else {
-		Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Not zipping - not permitted ($reply)}
+		Debug.H.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Not zipping - not permitted ($reply)}
 	    }
 
 	    dict set reply content-length [string length [dict get $reply -content]] ;# set correct content-length
@@ -582,10 +582,10 @@ proc TxTransmit {} {
 	    # this will continue to block new responses until $reply is unset
 
 	    # dict set reply transfer-encoding chunked	;# it has to be sent chunked - this is false, it *may* be chunked
-	    # Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Reply must be chunked ($reply)}
+	    # Debug.H.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: Reply must be chunked ($reply)}
 
 	    # content-encoding requested - set up content-encoding infrastructure
-	    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxTransmit -process content-encoding [dict get? $reply content-encoding]}
+	    Debug.H.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxTransmit -process content-encoding [dict get? $reply content-encoding]}
 	    switch -- [dict get? $reply content-encoding] {
 		gzip {
 		    corovar gzipper	;# this is the command which gzips a stream
@@ -600,23 +600,23 @@ proc TxTransmit {} {
 		    set gzheader [list crc 0 time [clock seconds] type [expr {[string match text/* [dict get? $reply content-type]]?"text":"binary"}]]
 		    set gzheader [dict merge $gzheader [dict get? $reply -gzheader]]
 		    set gzipper [zlib stream gzip -header $gzheader]
-		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxTransmit - content encoding gzip with $gzipper}
+		    Debug.H.httpdtxlow {[info coroutine]/[dict get $reply -transaction] TxTransmit - content encoding gzip with $gzipper}
 		}
 
 		identity {
-		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] identity}
+		    Debug.H.httpdtxlow {[info coroutine]/[dict get $reply -transaction] identity}
 		}
 
 		default {
 		    catch {dict unset reply content-encoding}
-		    Debug.httpdtxlow {[info coroutine]/[dict get $reply -transaction] none}
+		    Debug.H.httpdtxlow {[info coroutine]/[dict get $reply -transaction] none}
 		}
 	    }
 
 	    dict set reply -tx [info coroutine]	;# this is (by default) the mediator for transmitted content
 	} elseif {$code in {200 201 202 203 204 205 206 101}} {
 	    # no -content, no -process ... reply is contentless
-	    Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: contentless - response empty - no content in reply ($reply)}
+	    Debug.H.httpdtx {[info coroutine]/[dict get $reply -transaction] Format: contentless - response empty - no content in reply ($reply)}
 	    set code 204
 	    catch {dict unset reply content-length}
 	    catch {dict unset reply content-type}
@@ -637,7 +637,7 @@ proc TxTransmit {} {
 		# -content exists - we have the full content ready to go - just send it
 		# send literal content entire
 		chan puts -nonewline $socket [dict get $reply -content]	;# send the content in its entirety
-		Debug.httpdtx {[info coroutine]/[dict get $reply -transaction] Tx sent entity: [dict get $reply content-length] bytes}
+		Debug.H.httpdtx {[info coroutine]/[dict get $reply -transaction] Tx sent entity: [dict get $reply content-length] bytes}
 	    }
 	    tailcall TxComplete
 	}
@@ -657,7 +657,7 @@ if {0} {
 # indicates to Tx that a request with this transaction id
 # has been received and is (as yet) unsatisfied
 proc TxPending {trx args} {
-    Debug.process {[info coroutine] Tx received indication of pending $trx}
+    Debug.H.process {[info coroutine] Tx received indication of pending $trx}
     corovar pending; dict set pending $trx {}	;# accept the pending response placeholder
     # FIXME: what if we get a received $trx indication out of sequence?
 }
@@ -693,7 +693,7 @@ proc TxQueue {r args} {
 
 # TxReply - Rx has sent us a reply
 proc TxReply {r args} {
-    Debug.process {[info coroutine] TxReply [dict get $r -transaction] ([H rdump $r]) $args}
+    Debug.H.process {[info coroutine] TxReply [dict get $r -transaction] ([H rdump $r]) $args}
     tailcall TxQueue $r
 }
 
@@ -731,7 +731,7 @@ proc TxSend {end content} {
 	    set chunk [string range $content 0 $chunksize-1]
 	    set content [string range $content $chunksize end]
 	    TxLine $socket [format %X [string length $chunk]] $chunk
-	    Debug.httpdtxlow {[info coroutine] TxChunk sent [format %X [string length $chunk]] [binary encode hex $chunk] '$chunk'}
+	    Debug.H.httpdtxlow {[info coroutine] TxChunk sent [format %X [string length $chunk]] [binary encode hex $chunk] '$chunk'}
 	}
 	if {$end} {
 	    TxLine $socket 0 ""	;# complete chunked transmission
@@ -755,7 +755,7 @@ proc TxCancel {trx} {
 
     corovar mark
     if {![dict size $pending] && [llength $mark]} {
-	Debug.process {[info coroutine] Tx Send Mark ($args)}
+	Debug.H.process {[info coroutine] Tx Send Mark ($args)}
 	after 0 {*}$mark
 	set mark {}
     }
@@ -765,11 +765,11 @@ proc TxMark {args} {
     corovar pending
     corovar mark
     if {[dict size $pending]} {
-	Debug.process {[info coroutine] Tx Mark ($args) - pending:($pending)}
+	Debug.H.process {[info coroutine] Tx Mark ($args) - pending:($pending)}
 	set mark $args
 	return 0
     } else {
-	Debug.process {[info coroutine] Tx Send Mark ($args)}
+	Debug.H.process {[info coroutine] Tx Send Mark ($args)}
 	set mark {}
 	after 0 {*}$args
 	return 1
@@ -791,18 +791,18 @@ proc TxClose {args} {
 	}
     }
 
-    Debug.process {[info coroutine] Tx hears Rx is CLOSING close:$close}
+    Debug.H.process {[info coroutine] Tx hears Rx is CLOSING close:$close}
 }
 
 # TxTerminate - Rx indicates it's closing - Tx will close after clearing pending transmission queue
 proc TxTerminate {{t 1}} {
     corovar terminate; set terminate $t	;# Tx might close too
-    Debug.process {[info coroutine] Tx Terminate}
+    Debug.H.process {[info coroutine] Tx Terminate}
 }
 
 proc TxPassthru {{p 1}} {
     corovar passthru; set passthru $p
-    Debug.process {[info coroutine] Tx Passthru}
+    Debug.H.process {[info coroutine] Tx Passthru}
 }
 
 # TxContinue - Rx indicating it needs a 100-Continue sent ASAP
@@ -826,7 +826,7 @@ proc Tx {args} {
     set trx 0		;# transaction number currently in play
     set mark {}		;# command to indicate exhausted Tx queue
 
-    Debug.listener {[info coroutine] start Tx}
+    Debug.H.listener {[info coroutine] start Tx}
     try {
 	# while the channel is still open for transmission or is busy
 	# or there are requests pending or the input socket is open
@@ -836,7 +836,7 @@ proc Tx {args} {
 	set result {}
 	while {![catch {chan eof $socket} eof] && !$eof && [chan pending output $socket] != -1} {
 	    set cmd [::yieldm $result]	;# fetch next command
-	    Debug.process {[info coroutine] busy:[info exists rq] Tx yield [lindex $cmd 0]}
+	    Debug.H.process {[info coroutine] busy:[info exists rq] Tx yield [lindex $cmd 0]}
 	    if {[lindex $cmd 0] ne "coroVars"} {
 		Trace [lindex $cmd 0]
 	    }
@@ -847,7 +847,7 @@ proc Tx {args} {
 
 	    if {$continue} {
 		# Tx is idle and there is a pending continue
-		Debug.httpdtx {[info coroutine] Tx sending 100-Continue}
+		Debug.H.httpdtx {[info coroutine] Tx sending 100-Continue}
 		TxLine $socket "HTTP/1.1 100 Continue"
 		TxLine $socket ""
 		set continue 0
@@ -857,13 +857,13 @@ proc Tx {args} {
 	    # received a response - if Tx is idle, process all pending responses.
 	    # requests are stored in order of reception because of pending message,
 	    # so we process each pending request in natural key order.  Thank you dkf for that ability.
-	    Debug.process {[info coroutine] processing $sent ([dict keys $pending]) - [H sstate $socket]}
+	    Debug.H.process {[info coroutine] processing $sent ([dict keys $pending]) - [H sstate $socket]}
 	    foreach next [dict keys $pending] {
 		# consume next pending response as $rq - from this point on, we are not idle
 		set rq [dict get $pending $next]	;# we are now busy processing $reply
 
 		if {$next > $sent+1} {
-		    Debug.httpdtx {[info coroutine] Tx exhausted $next vs [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
+		    Debug.H.httpdtx {[info coroutine] Tx exhausted $next vs [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
 		    unset rq	;# resume idle state
 		    break	;# pipeline is blocked pending more replies
 		}
@@ -871,7 +871,7 @@ proc Tx {args} {
 		# respond to the next transaction in trx order
 		# consume the next reply from pending queue
 		if {![dict size [dict get $pending $next]]} {
-		    Debug.httpdtx {[info coroutine] Tx pipeline stalled at $next}
+		    Debug.H.httpdtx {[info coroutine] Tx pipeline stalled at $next}
 		    unset rq	;# resume idle state
 		    break	;# merely a place-holder.  We must wait for the actual packet
 		}
@@ -881,12 +881,12 @@ proc Tx {args} {
 		if {[info exists rq]} break	;# stop looking when TxTransmit starts an async rq to service
 	    }
 
-	    Debug.httpdtx {[info coroutine] Tx idle [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
+	    Debug.H.httpdtx {[info coroutine] Tx idle [expr {$sent+1}] ([dict size $pending] remain - [dict keys $pending])}
 
 	    # if the Tx queue is exhausted, mark it and close
 	    if {![dict size $pending]} {
 		if {[llength $mark]} {
-		    Debug.process {[info coroutine] Tx Send Delayed Mark ($args)}
+		    Debug.H.process {[info coroutine] Tx Send Delayed Mark ($args)}
 		    after 0 {*}$mark
 		    set mark {}
 		}
@@ -903,13 +903,13 @@ proc Tx {args} {
 	}
 	Debug.error {[info coroutine] Tx $socket ERROR '$e' ($eo)} $elevel
     } on return {e eo} {
-	Debug.httpdtxlow {[info coroutine] Tx $socket RETURN '$e' ($eo)}
+	Debug.H.httpdtxlow {[info coroutine] Tx $socket RETURN '$e' ($eo)}
     } on continue {e eo} {
-	Debug.httpdtxlow {[info coroutine] Tx $socket CONTINUE '$e' ($eo)}
+	Debug.H.httpdtxlow {[info coroutine] Tx $socket CONTINUE '$e' ($eo)}
     } on break {e eo} {
-	Debug.httpdtxlow {[info coroutine] Tx $socket BREAK '$e' ($eo)}
+	Debug.H.httpdtxlow {[info coroutine] Tx $socket BREAK '$e' ($eo)}
     } on ok {e eo} {
-	#Debug.httpdtxlow {[info coroutine] Tx $socket OK '$e' ($eo)}
+	#Debug.H.httpdtxlow {[info coroutine] Tx $socket OK '$e' ($eo)}
     } finally {
 	catch {chan flush $socket}
 	if {!$passthru} {
@@ -919,7 +919,7 @@ proc Tx {args} {
 	if {[dict size $pending]} {
 	    Debug.error {[info coroutine] Tx DEAD with [dict size $pending] pending}
 	}
-	Debug.httpdtx {[info coroutine] Tx close $socket}
+	Debug.H.httpdtx {[info coroutine] Tx close $socket}
 
 	if {[info exists gzipper]} {
 	    catch {$gzipper close}	;# delete stream

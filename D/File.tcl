@@ -1,8 +1,8 @@
 package require TclOO
 
 package require Debug
-Debug define file
-Debug define caching
+Debug define H.file
+Debug define H.caching
 
 package provide File 3.0
 
@@ -99,13 +99,14 @@ oo::class create File {
 		set mtime 0
 	    } on ok {mtime} {}
 	    if {$mtime <= $since} {
-		Debug.file {NotModified: $path - [H Date $mtime] < [dict get $r if-modified-since]}
-		Debug.file {if-modified-since: not modified}
+		Debug.H.file {NotModified: $path - [H Date $mtime] < [dict get $r if-modified-since]}
+		Debug.H.file {if-modified-since: not modified}
 		return [H NotModified $r]
 	    }
 	}
-
-	Debug.file {Found file '$path' of type [file type $path]}
+	file stat $path stat
+	
+	Debug.H.file {Found file '$path' of type [file type $path] stat:([array get stat])}
 
 	try {
 	    my [string totitle [file type $path]] $r $path
@@ -126,17 +127,17 @@ oo::class create File {
 	    } on error {e eo} {
 		set mtime 0
 	    } on ok {mtime} {}
-	    
+
 	    dict set r -reply last-modified [H Date $mtime]
 	} on error {e eo} {
-	    Debug.file {Error $e ($eo)}
+	    Debug.H.file {Error $e ($eo)}
 	    set r [H NotFound $r "<p>File '$opath' doesn't exist. '$path' '$e' ($eo)</p>"]
 	}
 	return $r
     }
 
     constructor {args} {
-	Debug.file {constructing File with ($args)}
+	Debug.H.file {constructing File with ($args)}
 	#variable expires 0	;# add an expiry to each response
 	variable crealm ""	;# optionally make files 'public'
 	variable fcopy 0	;# optionally send all files with [chan copy]

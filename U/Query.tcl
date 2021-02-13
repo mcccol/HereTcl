@@ -67,7 +67,7 @@ namespace eval ::Query {
 	Debug.query {decode '$str'} 10
 	variable dmap
 	set str [string map $dmap $str]
-#	set str [encoding convertfrom utf-8 $str]
+	#	set str [encoding convertfrom utf-8 $str]
 	Debug.query {decode dmap '$str' [2hex $str]} 10
 
 	return $str
@@ -303,8 +303,8 @@ namespace eval ::Query {
 	    catch {dict unset r -entity}
 	    catch {dict unset r -entitypath}
 	} elseif {[dict exists $r -entity]
-	    || [dict exists $r -entitypath]
-	} {
+		  || [dict exists $r -entitypath]
+	      } {
 	    # there is an entity body
 	    set ct [dict get $r content-type]
 	    Debug.query {parsing entity part of type '$ct'}

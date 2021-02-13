@@ -24,7 +24,7 @@ proc Readable {socket args} {
     if {[llength $args]} {
 	lappend args "" [lindex [info level -1] 0]
     }
-    Debug.httpdlow {[info coroutine] Readable ($args)}
+    Debug.H.httpdlow {[info coroutine] Readable ($args)}
     return [chan event $socket readable $args]
 }
 
@@ -63,7 +63,7 @@ proc CharEncoding {r} {
 
 # HeaderCheck - given a request dict $r, perform semantic checks and adjustments
 proc HeaderCheck {R} {
-    Debug.httpdlow {[info coroutine] HeaderCheck $R}
+    Debug.H.httpdlow {[info coroutine] HeaderCheck $R}
     # rfc2616 14.10:
     # A system receiving an HTTP/1.0 (or lower-version) message that
     # includes a Connection header MUST, for each connection-token
@@ -106,7 +106,7 @@ proc HeaderCheck {R} {
 	    dict set R -Url [dict merge [dict get $R -Url] [path $uri]]
 	}
     } elseif {$version > 1.0} {
-	Debug.httpdlow {[info coroutine] Host field required: $R}
+	Debug.H.httpdlow {[info coroutine] Host field required: $R}
 	Bad $R "HTTP 1.1 required to send Host"
     } else {
 	# HTTP 1.0 isn't required to send a Host field
@@ -135,7 +135,7 @@ proc HeaderCheck {R} {
 	}
     }
 
-    Debug.httpdlow {[info coroutine] HeaderCheck done: $R}
+    Debug.H.httpdlow {[info coroutine] HeaderCheck done: $R}
     return $R
 }
 
@@ -165,7 +165,7 @@ proc ParseRQ {R line} {
 proc Parse {R} {
     set lines [regsub -all {\n[\t ]+} [dict get $R -Full] " "]	;# merge continuation lines
     dict unset R -Full
-    Debug.process {[info coroutine] Parse: $lines}
+    Debug.H.process {[info coroutine] Parse: $lines}
 
     set clientheaders {}
 
@@ -191,7 +191,7 @@ proc Parse {R} {
     set R [ParseRQ $R $firstline]	;# fill in Header
     dict set R -Header clientheaders $clientheaders
     dict set R -Header state Parsed
-    Debug.process {Parse: ($R)}
+    Debug.H.process {Parse: ($R)}
     return $R
 }
 
@@ -218,7 +218,7 @@ proc RxWait {where} {
     if {![info exists timeout]} {
 	set time -1
     } else {
-	Debug.httpdlow {timeout == '$timeout' in $where}
+	Debug.H.httpdlow {timeout == '$timeout' in $where}
 	if {[dict exists $timeout $where]} {
 	    set time [dict get $timeout $where]
 	} elseif {[dict exists $timeout ""]} {
@@ -253,7 +253,7 @@ proc RxWait {where} {
 
     switch -- $exception {
 	PAUSE {
-	    Debug.httpd {[info coroutine] PAUSEd $rest}
+	    Debug.H.httpd {[info coroutine] PAUSEd $rest}
 	    set paused [chan event $socket readable]	;# remember the readable event
 	    Readable $socket				;# turn off readable event
 
@@ -262,7 +262,7 @@ proc RxWait {where} {
 	    while {1} {
 		set rest [lassign [::yieldm $where] exception]			;# wait for some event
 		if {$exception ne "UNPAUSE"} {
-		error "[info coroutine] received unexpected event '$exception $rest' while PAUSEd"
+		    error "[info coroutine] received unexpected event '$exception $rest' while PAUSEd"
 		} elseif {$exception eq "coroVars"} {
 		    set where [coroVars {*}$rest]
 		} elseif {$exception eq "hold"} {
@@ -272,7 +272,7 @@ proc RxWait {where} {
 		} else break
 	    }
 
-	    Debug.httpd {[info coroutine] UNPAUSEd $rest}
+	    Debug.H.httpd {[info coroutine] UNPAUSEd $rest}
 
 	    # restart timer, if required
 	    if {$time > 0} {
@@ -285,7 +285,7 @@ proc RxWait {where} {
 	    return 0	;# we have a servicable event
 	}
 	default {
-	    Debug.httpd {[info coroutine] Exception '$exception' from '$rest' while waiting for '$where'}
+	    Debug.H.httpd {[info coroutine] Exception '$exception' from '$rest' while waiting for '$where'}
 	    return -code error -errorcode [list $exception $rest] "$exception from $rest"
 	}
     }
@@ -298,7 +298,7 @@ proc Header {r {one 0}} {
     set socket [dict get $r -socket]
     chan configure $socket -blocking 0
 
-    Debug.process {[info coroutine] Header $one}
+    Debug.H.process {[info coroutine] Header $one}
 
     if {$one} {
 	set state Request
@@ -312,7 +312,7 @@ proc Header {r {one 0}} {
 	if {$len == -1} {
 	    # we have no line - can we even get a line?
 	    if {$maxline && [chan pending input $socket] > $maxline} {
-		Debug.process {[info coroutine] MAXLINE [chan pending input $socket] > $maxline}
+		Debug.H.process {[info coroutine] MAXLINE [chan pending input $socket] > $maxline}
 		Bad $r "Line too long (over $maxline)"
 	    } else {
 	    }
@@ -324,15 +324,15 @@ proc Header {r {one 0}} {
 		if {[incr count] > 4} {
 		    Bad $r "Too Much Blank"
 		}
-		Debug.process {[info coroutine] got blank pre-header}
+		Debug.H.process {[info coroutine] got blank pre-header}
 	    } else {
 		# this terminates headers
-		Debug.process {[info coroutine] got [llength [split [dict get $r -Full] \n]] lines of header}
+		Debug.H.process {[info coroutine] got [llength [split [dict get $r -Full] \n]] lines of header}
 		dict set r -Header state $state
 		return $r
 	    }
 	} else {
-	    Debug.httpd {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
+	    Debug.H.httpd {[info coroutine] read $len bytes '$line' - in:[chan pending input $socket] out:[chan pending output $socket]}
 	    dict append r -Full [string range $line 0 end-1] \n	;# append all lines in header
 	    if {$one} {
 		dict set r -Header state $state
@@ -342,11 +342,11 @@ proc Header {r {one 0}} {
     }
 
     if {$one} {
-	Debug.process {[info coroutine] got EOF waiting for request:'$r' $eof}
+	Debug.H.process {[info coroutine] got EOF waiting for request:'$r' $eof}
 	dict set r -Header state EOF
 	return -code error -errorcode EOF
     } else {
-	Debug.process {[info coroutine] got EOF after headers:'$r' $eof}
+	Debug.H.process {[info coroutine] got EOF after headers:'$r' $eof}
 	Bad $r "No end of Headers"
     }
 }
@@ -370,7 +370,7 @@ proc RxEntityChunked {r} {
 
     # get size of next chunk
     set chunksize [ChunkSize $socket]	;# how many bytes to read?
-    Debug.entity {[info coroutine] RxEntityChunked $chunksize}
+    Debug.H.entity {[info coroutine] RxEntityChunked $chunksize}
     if {$chunksize <= 0} {
 	# no more bytes to read
 	corovar entity_to_read; set entity_to_read 0	;# the entity has been read
@@ -412,7 +412,7 @@ proc RxEntityChunked {r} {
 
     Readable $socket [info coroutine]	;# restart reader loop
 
-    Debug.entity {[info coroutine] got chunked entity in $entity}
+    Debug.H.entity {[info coroutine] got chunked entity in $entity}
 
     # at this point we have a complete entity in $entity file, it's already been ungzipped
     # we need to process it somehow.
@@ -451,7 +451,7 @@ proc RxEntityEOF {r} {
 
     # read entity into memory
     Readable $socket [info coroutine]
-    Debug.entity {[info coroutine] RxEntityEOF}
+    Debug.H.entity {[info coroutine] RxEntityEOF}
 
     set entity ""
     while {[catch {chan eof $socket} eof] && !$eof} {
@@ -459,7 +459,7 @@ proc RxEntityEOF {r} {
 	append entity [chan read $socket]	;# read in as much as is available
     }
 
-    Debug.entity {[info coroutine] RxEntityEOF finished reading [string length $entity] [chan eof $socket]}
+    Debug.H.entity {[info coroutine] RxEntityEOF finished reading [string length $entity] [chan eof $socket]}
 
     if {$encoding ne "binary"} {
 	dict set r -entity [encoding convertfrom $encoding $entity]
@@ -490,7 +490,7 @@ proc RxEntitySized {r} {
     # simple 'entity follows header' with explicit length
     set left [dict get $r content-length]
 
-    Debug.entity {[info coroutine] RxEntitySized of length $left}
+    Debug.H.entity {[info coroutine] RxEntitySized of length $left}
 
     # enforce server limits on Entity length
     if {$maxentity > 0 && $left > $maxentity} {
@@ -507,7 +507,7 @@ proc RxEntitySized {r} {
 	# create a temp file to contain entity
 	set entity [Tmpfile $r]
 	chan configure $entity -encoding binary
-	Debug.entity {[info coroutine] RxEntitySized of length $left > $todisk ==> write to $entity}
+	Debug.H.entity {[info coroutine] RxEntitySized of length $left > $todisk ==> write to $entity}
 
 	Readable $socket [info coroutine]
 
@@ -533,7 +533,7 @@ proc RxEntitySized {r} {
     } elseif {$left > 0} {
 	# read entity into memory
 	Readable $socket [info coroutine]
-	Debug.entity {[info coroutine] RxEntitySized of length $left < $todisk ==> write to memory}
+	Debug.H.entity {[info coroutine] RxEntitySized of length $left < $todisk ==> write to memory}
 
 	set entity ""
 	while {[string length $entity] < $left && ![catch {chan eof $socket} eof] && !$eof} {
@@ -541,7 +541,7 @@ proc RxEntitySized {r} {
 	    append entity [chan read $socket [expr {$left - [string length $entity]}]]	;# read in as much as is available
 	}
 
-	Debug.entity {[info coroutine] RxEntitySized finished reading [string length $entity] [chan eof $socket]}
+	Debug.H.entity {[info coroutine] RxEntitySized finished reading [string length $entity] [chan eof $socket]}
 
 	if {$encoding ne "binary"} {
 	    dict set r -entity [encoding convertfrom $encoding $entity]
@@ -614,7 +614,7 @@ proc RxEntity {R} {
 	dict set R -Header state {RxEntity EOF}
 	set R [RxEntityEOF $R]
     }
-    Debug.entity {[info coroutine] RxEntity Done ($R)}
+    Debug.H.entity {[info coroutine] RxEntity Done ($R)}
     dict set R -Header state Entity
     return $R
 }
@@ -661,7 +661,7 @@ proc RxProcess {R} {
 	set state [lindex [dict get $R -Header state] 0]
 	Trace $state
 
-	Debug.process {[info coroutine] RxProcess in state '$state' ($R)}
+	Debug.H.process {[info coroutine] RxProcess in state '$state' ($R)}
 
 	switch -- $state {
 	    Initial {
@@ -677,7 +677,7 @@ proc RxProcess {R} {
 		    return -code error -errorcode HTTP "This isn't even HTTP '[string trim [dict get $R -Full]]'"
 		    Bad $R $message
 		} elseif {$no_legacy && $http eq "HTTP/1.0"} {
-		    return -code error -errorcode HTTP "We don't do HTTP/1.0"
+		    return -code error -errorcode HTTP "We don't do HTTP/1.0 ($http)"
 		}
 		set R [RxHeaders $R]	;# fetch all remaining headers
 	    }
@@ -725,7 +725,7 @@ proc RxProcess {R} {
 
 	    EOF {
 		# we got an EOF waiting for request
-		Debug.process {[info coroutine] RxProcess EOF rx state '$state' ($R)}
+		Debug.H.process {[info coroutine] RxProcess EOF rx state '$state' ($R)}
 		return -code error -errorcode EOF $R	;# abort the caller command
 	    }
 
@@ -735,7 +735,7 @@ proc RxProcess {R} {
 	}
     }
 
-    Debug.process {[info coroutine] RxProcess COMPLETED rx state '$state' ($R)}
+    Debug.H.process {[info coroutine] RxProcess COMPLETED rx state '$state' ($R)}
     return $R
 }
 
@@ -747,9 +747,9 @@ proc suspend {R {holding 0}} {
 	if {[info exists hold]} {
 	    incr hold
 	}
-	Debug.process {[info coroutine] suspending with hold $hold}
+	Debug.H.process {[info coroutine] suspending with hold $hold}
     } else {
-	Debug.process {[info coroutine] suspending without hold}
+	Debug.H.process {[info coroutine] suspending without hold}
     }
 
     return -code error -errorcode SUSPEND $R
@@ -768,7 +768,7 @@ proc Rx {args} {
 
     set args [dict merge $rx_defaults $args]
     set cleanup {}
-    Debug.listener {[info coroutine] start Rx $args}
+    Debug.H.listener {[info coroutine] start Rx $args}
     dict with args {}; unset args	;# install rx state vars
 
     set hold 0	;# a SUSPENDed process can hold us alive
@@ -783,7 +783,7 @@ proc Rx {args} {
 
     if {[info exists tls] && [dict size $tls]} {
 	#tls::handshake $socket	;# generate an error if the handshake failed - it'll be picked up below
-	Debug.listener {[info coroutine] tls::status [tls::status $socket]}
+	Debug.H.listener {[info coroutine] tls::status [tls::status $socket]}
     }
     # This can be used as a debugging aid to track coro state
     #trace add command [info coroutine] delete [namespace code [list RxDead [info coroutine] $socket $tx]] ;# track coro state
@@ -808,35 +808,35 @@ proc Rx {args} {
 	    dict set R -transaction [incr transaction]	;# set up initial request dict
 	    dict set R -time [clock milliseconds]
 
-	    Debug.process {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
+	    Debug.H.process {[info coroutine] Rx Dispatch: '$dispatch' ($R)}
 
 	    set R [{*}$dispatch $R]		;# Process the request+entity in a bespoke command
 	    if {[info exists process]} {
 		set R [{*}$process $R]		;# mainly used to test H
 	    }
 	} on ok {} {
-	    Debug.process {[info coroutine] Dispatch: OK ([set __x $R; dict set __x -reply -content @elided@; set __x]) - READABLE [chan event $socket readable]}
+	    Debug.H.process {[info coroutine] Dispatch: OK ([set __x $R; dict set __x -reply -content @elided@; set __x]) - READABLE [chan event $socket readable]}
 	    dict set Trace $transaction [dict get? $R -Header full]
 	    after 0 [list $tx TxReply $R OK]		;# finally, transmit the response
 	} trap HTTP {e eo} {
 	    # HTTP protocol error - usually from [H Bad] which has sent the error response
-	    Debug.process {[info coroutine] Httpd $e}
+	    Debug.H.process {[info coroutine] Httpd $e}
 	    break
 	} trap EOF {e eo} {
 	    # EOF while processing
-	    Debug.process {[info coroutine] EOF waiting for request}
+	    Debug.H.process {[info coroutine] EOF waiting for request}
 	    break
 	} trap TIMEOUT {e eo} {
 	    if {[dict get $eo -errorcode] eq ""} {
-		Debug.process {[info coroutine] Inactive $e}
+		Debug.H.process {[info coroutine] Inactive $e}
 	    } else {
-		Debug.process {[info coroutine] Httpd $e}
+		Debug.H.process {[info coroutine] Httpd $e}
 	    }
 	    #$tx TxReply [TimeOut $R] TIMEOUT		;# transmit the timeout
 	    break
 	} trap SUSPEND {} {
 	    # keep processing more input - this dispatcher has suspended and will handle its own response
-	    Debug.process {[info coroutine] Dispatch: SUSPEND}
+	    Debug.H.process {[info coroutine] Dispatch: SUSPEND}
 	} trap WEBSOCKET {R eo} {
 	    # connection has been Upgraded to a WebSocket
 	    # HTTP processing is complete - turn off Rx events
@@ -845,7 +845,7 @@ proc Rx {args} {
 	    }
 	    catch {Readable $socket}		;# turn off the chan event readable
 
-	    Debug.process {[info coroutine] WEBSOCKET ($R) [namespace current] / ([namespace import])}
+	    Debug.H.process {[info coroutine] WEBSOCKET ($R) [namespace current] / ([namespace import])}
 	    try {
 		# abort the caller command, initiate WEBSOCKET mode
 		set R [ws accept $R]		;# construct websocket handshake
@@ -877,7 +877,7 @@ proc Rx {args} {
 		# Now we know the Tx has shut down, we're free to websocket - go active
 		ws active $R		;# websocket owns this coroutine now
 	    } trap HTTP {e eo} {
-		Debug.process {[info coroutine] WebSocket Httpd $e}
+		Debug.H.process {[info coroutine] WebSocket Httpd $e}
 	    } on error {e eo} {
 		if {[dict exists $eo -debug]} {
 		    set elevel [dict get $eo -debug]
@@ -891,13 +891,13 @@ proc Rx {args} {
 	} trap CLOSE {e eo} {
 	    # the process has completed the transaction and wants to close
 	    # we have nothing to do but wait
-	    Debug.process {[info coroutine] CLOSE}
+	    Debug.H.process {[info coroutine] CLOSE}
 	    Trace close
 	    break
 	} trap PASSTHRU {e eo} {
 	    # the process has handed off our socket to another process
 	    # we have nothing to do but wait
-	    Debug.process {[info coroutine] PASSTHRU}
+	    Debug.H.process {[info coroutine] PASSTHRU}
 	    $tx TxPassthru 1
 	    set passthru 1
 	    Trace passthru
@@ -922,7 +922,7 @@ proc Rx {args} {
     if {!$passthru} {
 	set where "Terminating"
 	while {$hold > 0} {
-	    Debug.process {[info coroutine] termination held $hold}
+	    Debug.H.process {[info coroutine] termination held $hold}
 	    set rest [lassign [::yieldm $where] exception]	;# wait for WEBSOCKET event from HWS.tcl
 	    if {$exception eq "coroVars"} {
 		set where [coroVars {*}$rest]
@@ -939,7 +939,7 @@ proc Rx {args} {
 	catch {chan close $socket read}	;# close the socket read side
 	catch {$tx TxClose 1}		;# inform Tx coro that we're closing
 	if {[info exists ondisconnect]} {
-	    Debug.process {[info coroutine] ondisconnect '$ondisconnect' ($R)}
+	    Debug.H.process {[info coroutine] ondisconnect '$ondisconnect' ($R)}
 	    try {
 		{*}$ondisconnect [info coroutine] [info locals]
 	    } on error {e eo} {
@@ -967,7 +967,7 @@ proc Rx {args} {
     }
     catch {$tx TxTerminate 1}		;# shut down Tx
 
-    Debug.process {[info coroutine] Termination: [if {[catch {chan eof $socket} eof] || $eof} {
+    Debug.H.process {[info coroutine] Termination: [if {[catch {chan eof $socket} eof] || $eof} {
 	set reason "EOF on socket"
     } elseif {[chan pending input $socket] == -1 || [chan pending output $socket] == -1} {
 	set reason "No Pending i/o eof: [chan eof $socket] in:[chan pending input $socket] out:[chan pending output $socket]"
@@ -977,7 +977,7 @@ proc Rx {args} {
 	set reason unknown
     }]}
 
-    Debug.listener {[info coroutine] Rx DONE $socket [if {[catch {chan eof $socket} eof]} {set x "GONE headers [llength $headers]"} else {set x "eof:$eof in:[chan pending input $socket] out:[chan pending output $socket] headers:[llength $headers]"}]}
+    Debug.H.listener {[info coroutine] Rx DONE $socket [if {[catch {chan eof $socket} eof]} {set x "GONE headers [llength $headers]"} else {set x "eof:$eof in:[chan pending input $socket] out:[chan pending output $socket] headers:[llength $headers]"}]}
 }
 
 # load required H components

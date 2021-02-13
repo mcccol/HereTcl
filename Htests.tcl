@@ -341,7 +341,7 @@ after 0 {::apply {{} {
 	    puts stderr "ERR:'$e'($eo)/([array get r])"
 	}
     }}]
- 
+    
     set ::start_time [clock microseconds]
     set ::result() MOOP
     for {set i 0} {$i < $::maxports} {incr i} {

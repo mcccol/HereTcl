@@ -1,7 +1,7 @@
 # HWebSocket - H WebSocket processor
 package require Debug
 
-Debug define websocket
+Debug define H.websocket
 
 package require sha1
 package provide HWS 2.0
@@ -14,7 +14,7 @@ namespace eval ws {
 	if {[dict get $frame opcode] == 1} {
 	    dict set frame payload [encoding convertto utf-8 [dict get $frame payload]]
 	}
-	Debug.websocket {[info coroutine] WebSocket finished message ($frame)}
+	Debug.H.websocket {[info coroutine] WebSocket finished message ($frame)}
 	Chan incoming $chan [dict get $frame payload]
     }
 
@@ -23,7 +23,7 @@ namespace eval ws {
 	corovar message
 	corovar chan
 
-	Debug.websocket {[info coroutine] WebSocket process_frame done ($frame) '[binary encode hex $payload]'}
+	Debug.H.websocket {[info coroutine] WebSocket process_frame done ($frame) '[binary encode hex $payload]'}
 	dict with frame {}
 	switch -- $opcode {
 	    0 {
@@ -34,8 +34,16 @@ namespace eval ws {
 			dict set message payload [encoding convertto utf-8 [dict get $message payload]]
 		    }
 
-		    corovar wsprocess; {*}$wsprocess [dict get $message type] $message
-		    unset message
+		    try {
+			corovar wsprocess; {*}$wsprocess [dict get $message type] $message
+		    } trap {TCL LOOKUP COMMAND} {e eo} {
+			# processor has gone away
+			Debug.error {WS Processor '$wsprocess' has died on [dict get $message type] ($frame)}
+		    } on error {e eo} {
+			Debug.error {WS Error on [dict get $message type] '$e' ($eo) frame:($frame)}
+		    } finally {
+			unset message
+		    }
 		}
 	    }
 
@@ -57,8 +65,14 @@ namespace eval ws {
 			dict set frame payload $payload
 			dict set frame type binary
 		    }
-
-		    corovar wsprocess; {*}$wsprocess [dict get $frame type] $frame
+		    try {
+			corovar wsprocess; {*}$wsprocess [dict get $frame type] $frame
+		    } trap {TCL LOOKUP COMMAND} {e eo} {
+			# processor has gone away
+			Debug.error {WS Processor '$wsprocess' has died on [dict get $frame type] ($frame)}
+		    } on error {e eo} {
+			Debug.error {WS Error [dict get $frame type] '$e' ($eo) frame:($frame)}
+		    }
 		} elseif {![info exists message]} {
 		    set message $frame
 
@@ -75,7 +89,14 @@ namespace eval ws {
 	    
 	    3 - 4 - 5 - 5 - 7 {
 		# reserved for further non-control frames
-		corovar wsprocess; {*}$wsprocess op $opcode $frame
+		try {
+		    corovar wsprocess; {*}$wsprocess op $opcode $frame
+		} trap {TCL LOOKUP COMMAND} {e eo} {
+		    # processor has gone away
+		    Debug.error {WS Processor '$wsprocess' has died on $opcode ($frame)}
+		} on error {e eo} {
+		    Debug.error {WS Error on $opcode '$e' ($eo) frame:($frame)}
+		}
 	    }
 	    
 	    8 {
@@ -83,19 +104,24 @@ namespace eval ws {
 		# if we have sent a close - we just close
 		# if we have not sent a close - we must send a close in response
 		corovar socket
-		corovar closed
-		if {!$closed} {
-		    Debug.websocket {[info coroutine] WebSocket closed by remote}
-		    catch {puts -nonewline $socket [binary format aa \x88 \0]}
-		    incr closed
-		    chan close $socket write
+		if {[chan pending output $socket] != -1} {
+		    Debug.H.websocket {[info coroutine] WebSocket closed by remote ($frame) [binary encode hex [dict get $frame header]]}
+		    puts -nonewline $socket [binary format c 0x88][data [binary format S 1000] "Server Closed"]; chan flush $socket
+		    catch {chan close $socket write}
 		} else {
 		    # the other side has closed - so now we close too
-		    Debug.websocket {[info coroutine] WebSocket close acknowledged by remote}
-		    chan close $socket
+		    Debug.H.websocket {[info coroutine] WebSocket close acknowledged by remote [chan pending input $socket]}
+		    catch {chan close $socket}
 		}
 
-		corovar wsprocess; {*}$wsprocess closed $frame
+		try {
+		    corovar wsprocess; {*}$wsprocess closed $frame
+		} trap {TCL LOOKUP COMMAND} {e eo} {
+		    # processor has gone away - this is ok
+		    Debug.error {WS Processor '$wsprocess' has died on close ($frame)}
+		} on error {e eo} {
+		    Debug.error {WS Error close '$e' ($eo) frame:($frame)}
+		}
 	    }
 	    
 	    9 {
@@ -119,7 +145,7 @@ namespace eval ws {
 		if {![info exists closed]} {
 		    corovar socket
 		    try {
-			binary format aca* \x8A [dict get $frame ll] $payload
+			binary format cca* 0x8A [dict get $frame ll] $payload
 		    } on ok {pong} {
 			puts -nonewline $socket $pong
 		    } on error {e eo} {
@@ -127,7 +153,14 @@ namespace eval ws {
 		    }
 		}
 
-		corovar wsprocess; {*}$wsprocess ping $frame
+		try {
+		    corovar wsprocess; {*}$wsprocess ping $frame
+		} trap {TCL LOOKUP COMMAND} {e eo} {
+		    # processor has gone away
+		    Debug.error {WS Processor '$wsprocess' has died on ping ($frame)}
+		} on error {e eo} {
+		    Debug.error {WS Error ping '$e' ($eo) frame:($frame)}
+		}
 	    }
 	    
 	    A {
@@ -145,12 +178,26 @@ namespace eval ws {
 		# not expected.
 
 		# we don't send pings as yet
-		corovar wsprocess; {*}$wsprocess pong $frame
+		try {
+		    corovar wsprocess; {*}$wsprocess pong $frame
+		} trap {TCL LOOKUP COMMAND} {e eo} {
+		    # processor has gone away
+		    Debug.error {WS Processor '$wsprocess' has died on pong ($frame)}
+		} on error {e eo} {
+		    Debug.error {WS Error pong '$e' ($eo) frame:($frame)}
+		}
 	    }
 
 	    B - C - D - E - F {
 		# reserved for further control frames
-		corovar wsprocess; {*}$wsprocess control $opcode $frame
+		try {
+		    corovar wsprocess; {*}$wsprocess control $opcode $frame
+		} trap {TCL LOOKUP COMMAND} {e eo} {
+		    # processor has gone away
+		    Debug.error {WS Processor '$wsprocess' has died on $opcode ($frame)}
+		} on error {e eo} {
+		    Debug.error {WS Error $opcode '$e' ($eo) frame:($frame)}
+		}
 	    }
 
 	    default {
@@ -169,20 +216,20 @@ namespace eval ws {
 	    set incoming(state) ""
 	    set incoming(req) 2
 	    set incoming(offset) 0
-	    Debug.websocket {[info coroutine] WebSocket read_frame initialized ([array get incoming])}
+	    Debug.H.websocket {[info coroutine] WebSocket read_frame initialized ([array get incoming])}
 	}
 	set in [chan read $socket $incoming(req)]
-	Debug.websocket {[info coroutine] WebSocket read_frame read '[binary encode hex $in]' [string length $in]: [array get incoming]}
+	Debug.H.websocket {[info coroutine] WebSocket read_frame read '[binary encode hex $in]' [string length $in]: [array get incoming]}
 	corovar stream; append stream $in
 
-	#Debug.websocket {$incoming(req) > 0 && $incoming(offset)+$incoming(req) <= [string length $stream]}
+	#Debug.H.websocket {$incoming(req) > 0 && $incoming(offset)+$incoming(req) <= [string length $stream]}
 	while {$incoming(req) > 0 && $incoming(offset)+$incoming(req) <= [string length $stream]} {
 	    switch -- $incoming(state) {
 		"" {
 		    # initial frame header
 		    set r1 [binary scan [string range $stream 0 1] B4X1h1B1X1cu1 bits incoming(opcode) incoming(masked) incoming(len)]
 		    lassign [split $bits ""] incoming(fin) incoming(rsv1) incoming(rsv2) incoming(rsv3)
-		    Debug.websocket {[info coroutine] WebSocket read_frame decoding $r1 [binary encode hex $stream]: [array get incoming]}
+		    Debug.H.websocket {[info coroutine] WebSocket read_frame decoding $r1 [binary encode hex $stream]: [array get incoming]}
 		    if {$incoming(rsv1) || $incoming(rsv2) || $incoming(rsv3)} {
 			error "[info coroutine] WebSocket $bits has reserved bits set"
 		    }
@@ -208,7 +255,7 @@ namespace eval ws {
 			}
 		    }
 
-		    Debug.websocket {[info coroutine] WebSocket read_frame decoded $r1 [binary encode hex $stream]: [array get incoming]}
+		    Debug.H.websocket {[info coroutine] WebSocket read_frame decoded $r1 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		paylen16 {
@@ -227,7 +274,7 @@ namespace eval ws {
 			set incoming(req) 0
 			unset incoming(masked)
 		    }
-		    Debug.websocket {[info coroutine] WebSocket read_frame paylen16 [binary encode hex $stream]: [array get incoming]}
+		    Debug.H.websocket {[info coroutine] WebSocket read_frame paylen16 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		paylen64 {
@@ -246,7 +293,7 @@ namespace eval ws {
 			set incoming(req) 0
 			unset incoming(masked)
 		    }
-		    Debug.websocket {[info coroutine] WebSocket read_frame paylen64 [binary encode hex $stream]: [array get incoming]}
+		    Debug.H.websocket {[info coroutine] WebSocket read_frame paylen64 [binary encode hex $stream]: [array get incoming]}
 		}
 
 		mask {
@@ -257,7 +304,7 @@ namespace eval ws {
 
 		    set incoming(state) payload
 		    set incoming(req) 0
-		    Debug.websocket {[info coroutine] WebSocket read_frame mask '[binary encode hex $stream]': [array get incoming]}
+		    Debug.H.websocket {[info coroutine] WebSocket read_frame mask '[binary encode hex $stream]': [array get incoming]}
 		}
 
 		payload {
@@ -287,6 +334,16 @@ namespace eval ws {
 	corovar payload; set payload ""	;# this is the payload of the current frame
 	Readable $socket [info coroutine] frame
 	set what {}
+
+	try {
+	    corovar wsprocess; {*}$wsprocess open
+	} trap {TCL LOOKUP COMMAND} {e eo} {
+	    # processor has gone away
+	    Debug.error {WS Processor '$wsprocess' has died on open}
+	} on error {e eo} {
+	    Debug.error {WS Error open '$e' ($eo)}
+	}
+
 	while {1} {
 	    if {[catch {chan eof $socket} eof] || $eof} return
 
@@ -299,7 +356,9 @@ namespace eval ws {
 		send {
 		    send {*}$rest	;# call the send-data command
 		}
-
+		close {
+		    incr close
+		}
 		frame {
 		    # reading the frame
 		    set frame [read_frame $socket]
@@ -309,11 +368,11 @@ namespace eval ws {
 			if {[dict get $frame len]} {
 			    dict set frame req [dict get $frame len]	;# we want this much payload
 			    Readable $socket [info coroutine] payload	;# move to payload reading state
-			    Debug.websocket {[info coroutine] WebSocket active read ($frame)}
+			    Debug.H.websocket {[info coroutine] WebSocket active read ($frame)}
 			} else {
 			    # we have 0 length payload - keep reading frames while processing this one
 			    process_frame $frame ""
-			    Debug.websocket {[info coroutine] WebSocket active read ($frame)}
+			    Debug.H.websocket {[info coroutine] WebSocket active read ($frame)}
 			}
 		    } else {
 			# we have yet to complete the frame
@@ -325,7 +384,7 @@ namespace eval ws {
 		    set bytes [chan read $socket [dict get $frame req]]
 		    append payload $bytes
 		    dict incr frame req -[string length $bytes]
-		    Debug.websocket {[info coroutine] WebSocket payload ($frame)}
+		    Debug.H.websocket {[info coroutine] WebSocket payload ($frame)}
 
 		    if {[dict get $frame req]} {
 			# keep reading payload, there's more to come
@@ -335,15 +394,15 @@ namespace eval ws {
 			    # get mask bytes
 			    set mask [dict get $frame mask]
 			    binary scan $payload cu* payload
-			    Debug.websocket {[info coroutine] WebSocket payload mask '$mask' ($frame) payload: ($payload)}
+			    Debug.H.websocket {[info coroutine] WebSocket payload mask '$mask' ($frame) payload: ($payload)}
 			    set i -1
 			    set payload [binary format c* [lmap p $payload {
 				set i [expr {($i+1) % 4}]
 				expr {$p ^ [lindex $mask $i]}
 			    }]]
-			    Debug.websocket {[info coroutine] WebSocket payload [binary encode hex $payload] '$payload' ($frame)}
+			    Debug.H.websocket {[info coroutine] WebSocket payload [binary encode hex $payload] '$payload' ($frame)}
 			} else {
-			    Debug.websocket {[info coroutine] WebSocket payload no mask ($frame)}
+			    Debug.H.websocket {[info coroutine] WebSocket payload no mask ($frame)}
 			}
 
 			Readable $socket [info coroutine] frame
@@ -360,7 +419,8 @@ namespace eval ws {
     }
 
     # data - return length + data
-    proc data {data} {
+    proc data {args} {
+	set data [join $args ""]
 	set len [string length $data]
 
 	if {$len < 126} {
@@ -389,23 +449,24 @@ namespace eval ws {
     }
 
     # close connected websocket from anywhere (including outside the ws coro)
-    proc wsClose {socket {data ""}} {
-	puts -nonewline $socket [binary format c* 0x88][data $data]; chan flush $socket
+    proc wsClose {socket {data "Server Closed"} {status 1000}} {
+	puts -nonewline $socket [binary format c 0x88][data [binary format S $status] $data]; chan flush $socket
+	catch {chan close $socket write}	;# close the outbound - hoping the coro will detect it
     }
 
     # ping connected websocket from anywhere (including outside the ws coro)
     proc wsPing {socket {data ""}} {
-	puts -nonewline $socket [binary format c* 0x89][data $data]; chan flush $socket
+	puts -nonewline $socket [binary format c 0x89][data $data]; chan flush $socket
     }
 
     # pong connected websocket from anywhere (including outside the ws coro)
     proc wsPong {socket {data ""}} {
-	puts -nonewline $socket [binary format c* 0x8A][data $data]; chan flush $socket
+	puts -nonewline $socket [binary format c 0x8A][data $data]; chan flush $socket
     }
 
     # close connected websocket
-    proc Close {} {
-	corovar socket; tailcall wsClose $socket
+    proc Close {{data ""} {status ""}} {
+	corovar socket; tailcall wsClose $socket $data $status
     }
 
     # ping connected websocket
@@ -429,7 +490,7 @@ namespace eval ws {
     # running inside the RX coroutine, still has the TX coroutine to talk to
     proc accept {R} {
 	corovar socket
-	Debug.websocket {[info coroutine] WebSocket connect ($R) [chan configure $socket]}
+	Debug.H.websocket {[info coroutine] WebSocket connect ($R) [chan configure $socket]}
 
 	corovar closed; set closed 0
 
@@ -491,11 +552,11 @@ namespace eval ws {
 
 	set coro [namespace current]::$chan
 	coroutine $coro apply [list {R chan} {
-	    Debug.websocket {started coroutine [namespace current]::$chan}
+	    Debug.H.websocket {started coroutine [namespace current]::$chan}
 	    chan event $chan readable [list [info coroutine] read]
 	    set closing 0
 	    while {![eof $chan]} {
-		Debug.websocket {yield in coroutine [namespace current]::$chan}
+		Debug.H.websocket {yield in coroutine [namespace current]::$chan}
 		set rest [lassign [::yieldm] opcode]
 		switch -- $opcode {
 		    read {
@@ -505,10 +566,10 @@ namespace eval ws {
 			    break
 			}
 
-			Debug.websocket {readable in coroutine [namespace current]::$chan got '$line'}
+			Debug.H.websocket {readable in coroutine [namespace current]::$chan got '$line'}
 			puts $chan $line
 			flush $chan
-			Debug.websocket {sent line in coroutine [namespace current]::$chan}
+			Debug.H.websocket {sent line in coroutine [namespace current]::$chan}
 		    }
 		    
 		    text -

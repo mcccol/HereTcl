@@ -49,7 +49,7 @@ namespace eval ::conversions {
 
 	variable htmlhead
 	set content "${htmlhead}\n"
-	    
+	
 	append content <html> \n
 	append content <head> \n
 	
@@ -117,7 +117,7 @@ namespace eval ::conversions {
 	if {[dict exists $rsp -reply -postload]} {
 	    append content \n [join [dict get $rsp -reply -postload] \n] \n
 	}
-		
+	
 	append content </body> \n
 	append content </html> \n
 

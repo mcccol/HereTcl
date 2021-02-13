@@ -10,14 +10,14 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
 package require Query
 package require H
 package require Debug
-Debug define direct
+Debug define H.direct
 
 package provide Direct 2.0
 
 oo::class create Direct {
     # Define - define a command with args for this Direct domain
     method Define {m args} {
-	Debug.direct {[lindex [self] 0] method $m definition: $args}
+	Debug.H.direct {[lindex [self] 0] method $m definition: $args}
 	if {[lindex $args end] eq "args"} {
 	    set needargs 1
 	    set params [lrange $args 1 end-1]	;# remove 'r' and args from params
@@ -27,12 +27,12 @@ oo::class create Direct {
 	}
 
 	variable methods
-	Debug.direct {[lindex [self] 0] method $m record definition: [list $needargs $params]}
+	Debug.H.direct {[lindex [self] 0] method $m record definition: [list $needargs $params]}
 	dict set methods $m [list $needargs $params]
     }
 
     method mkMethods {} {
-	Debug.direct {Methods on [self]: [info object methods [self] -all -private]}
+	Debug.H.direct {Methods on [self]: [info object methods [self] -all -private]}
 	
 	# construct a dict from method name to the formal parameters of the method
 	set class [info object class [self]]
@@ -68,7 +68,7 @@ oo::class create Direct {
 	    }
 	}
 
-	Debug.direct {[lindex [self] 0] of class $class methods: ($methods) / ([info class methods $class -private -all]) - ([info object methods [self] -all -private])}
+	Debug.H.direct {[lindex [self] 0] of class $class methods: ($methods) / ([info class methods $class -private -all]) - ([info object methods [self] -all -private])}
 
 	variable wildcard
 	if {![dict exists $methods $wildcard]} {
@@ -104,7 +104,7 @@ oo::class create Direct {
     }
 
     method Match {suffix {wild ""}} {
-	Debug.direct {Match ($suffix)}
+	Debug.H.direct {Match ($suffix)}
 	set suffix [string trimleft $suffix /]
 
 	# strip extensions from each component
@@ -129,9 +129,9 @@ oo::class create Direct {
 	set cmd ""
 	set key_probe /[join $cprefix /]
 	variable methods
-	Debug.direct {Matching ($cprefix) in ([dict keys $methods])}
+	Debug.H.direct {Matching ($cprefix) in ([dict keys $methods])}
 	while {$cmd eq "" && [llength $cprefix]} {
-	    Debug.direct {searching for '/[join $cprefix /]' in ([dict keys $methods]) - $key_probe}
+	    Debug.H.direct {searching for '/[join $cprefix /]' in ([dict keys $methods]) - $key_probe}
 	    #set probe [dict keys $methods /[join $cprefix /]]
 	    set probe {}
 	    foreach key [dict keys $methods] {
@@ -155,7 +155,7 @@ oo::class create Direct {
 
 	# no match - use wildcard method
 	if {$cmd eq ""} {
-	    Debug.direct {'$cmd' not found looking for '$fn' in ($methods)}
+	    Debug.H.direct {'$cmd' not found looking for '$fn' in ($methods)}
 	    if {$wild ne ""} {
 		set result [list $wild $suffix / /]
 	    } else {
@@ -165,7 +165,7 @@ oo::class create Direct {
 	} else {
 	    set result [list $cmd [join [lreverse $extra] /] [join $fprefix /] [join $cprefix /]]
 	}
-	Debug.direct {Match result: $result}
+	Debug.H.direct {Match result: $result}
 	return $result
     }
 
@@ -184,7 +184,7 @@ oo::class create Direct {
 
 	dict set r -Query [set qd [Query parse $r]]
 	
-	Debug.direct {cmd:'$cmd' needargs:$needargs params:'$params' qd:[dict keys $qd]}
+	Debug.H.direct {cmd:'$cmd' needargs:$needargs params:'$params' qd:[dict keys $qd]}
 
 	set argl {}
 	array set used {}
@@ -192,20 +192,20 @@ oo::class create Direct {
 	foreach arg $params {
 	    lassign $arg arg default
 	    if {[Query exists $qd $arg]} {
-		Debug.direct {param '$arg' exists}
+		Debug.H.direct {param '$arg' exists}
 		incr used($arg)
 		if {[Query numvalues $qd $arg] > 1} {
-		    Debug.direct {multiple $arg: [Query values $qd $arg]}
+		    Debug.H.direct {multiple $arg: [Query values $qd $arg]}
 		    lappend argl [Query values $qd $arg]
 		} else {
-		    Debug.direct {single $arg: [string range [Query value $qd $arg] 0 80]...}
+		    Debug.H.direct {single $arg: [string range [Query value $qd $arg] 0 80]...}
 		    lappend argl [Query value $qd $arg]
 		}
 	    } elseif {$complain} {
 		# complain if a named parameter does not exist
 		error "Required parameter '$arg' does not exist"
 	    } else {
-		Debug.direct {param '$arg' does not exist}
+		Debug.H.direct {param '$arg' does not exist}
 		lappend argl $default
 	    }
 	}
@@ -214,7 +214,7 @@ oo::class create Direct {
 	if {$needargs} {
 	    foreach {name value} [Query flatten $qd] {
 		if {![info exists used($name)]} {
-		    Debug.direct {args $name: [string range $value 0 80]...}
+		    Debug.H.direct {args $name: [string range $value 0 80]...}
 		    lappend argll $name $value
 		}
 	    }
@@ -249,7 +249,7 @@ oo::class create Direct {
 
 	chan configure $dsock -encoding binary -buffering none -blocking 0 -translation binary
 	lassign [split [dict get $r -Full]] method . version
-	Debug.direct {[info coroutine] PASSTHRU URI: $url}
+	Debug.H.direct {[info coroutine] PASSTHRU URI: $url}
 	puts -nonewline $dsock "$method $url $version\xd\xa"
 
 	set socket [dict get $r -socket]
@@ -264,7 +264,7 @@ oo::class create Direct {
     }
 
     method wscall {args} {
-	Debug.direct {[info coroutine] [self] wscall $args}
+	Debug.H.direct {[info coroutine] [self] wscall $args}
 	return [my {*}$args]
     }
 
@@ -272,12 +272,12 @@ oo::class create Direct {
 	# normal HTTP dispatch, but with WebSocket
 	set r [my Url $r]	;# expand out the -Url element a bit
 
-	Debug.direct {[info coroutine] ws $r}
+	Debug.H.direct {[info coroutine] ws $r}
 
 	variable methods
 	set cmd [dict get $r -Url cmd]
 	if {![dict exists $methods $cmd] eq {}} {
-	    Debug.direct {default not found looking for $cmd in ($methods)}
+	    Debug.H.direct {default not found looking for $cmd in ($methods)}
 	    return [H NotFound $r]
 	}
 
@@ -288,7 +288,7 @@ oo::class create Direct {
 	    set argl {}; set argll {}
 	}
 
-	Debug.direct {[self] calling websocket method $cmd [string range $argl 0 80]... [dict keys $argll]}
+	Debug.H.direct {[self] calling websocket method $cmd [string range $argl 0 80]... [dict keys $argll]}
 	upvar #1 wsprocess wsprocess; set wsprocess [list [self] wscall $cmd]
 	dict set r -ws [list [self] wscall $cmd]	;# default to call the direct method for each WS event
 	return [my $cmd connect $r {*}$argl {*}$argll]	;# perform the direct call
@@ -306,7 +306,7 @@ oo::class create Direct {
 	# handle passthru command, if this is one
 	variable passthru
 	if {[set cmd |[lindex [split [lindex [split $full] 1] /] 1]] in $passthru} {
-	    Debug.direct {[info coroutine] PASSTHRU DO: $cmd}
+	    Debug.H.direct {[info coroutine] PASSTHRU DO: $cmd}
 	    try {
 		set cmd [my $cmd $r]	;# |commands return [list $r $passthru_socket]
 	    } on error {e eo} {
@@ -328,12 +328,12 @@ oo::class create Direct {
 	# normal HTTP dispatch
 	set r [my Url $r]	;# expand out the -Url element a bit
 
-	Debug.direct {[self] do $r}
+	Debug.H.direct {[self] do $r}
 
 	variable methods
 	set cmd [dict get $r -Url cmd]
 	if {![dict exists $methods $cmd] eq {}} {
-	    Debug.direct {default not found looking for $cmd in ($methods)}
+	    Debug.H.direct {default not found looking for $cmd in ($methods)}
 	    return [H NotFound $r]
 	}
 
@@ -344,13 +344,13 @@ oo::class create Direct {
 	    set argl {}; set argll {}
 	}
 	
-	Debug.direct {calling method $cmd [string range $argl 0 80]... [dict keys $argll]}
+	Debug.H.direct {calling method $cmd [string range $argl 0 80]... [dict keys $argll]}
 	
 	tailcall my Call $r $cmd {*}$argl {*}$argll	;# perform the direct call
     }
 
     self method new {args} {
-	Debug.direct {Direct [self] new $name $args}
+	Debug.H.direct {Direct [self] new $name $args}
 	set body [lindex $args end]
 	set args [lrange $args 0 end-1]
 	set obj [next {*}$args]
@@ -363,7 +363,7 @@ oo::class create Direct {
 
     # create an object of type Direct
     self method create {name args} {
-	Debug.direct {Direct [self] create $name $args}
+	Debug.H.direct {Direct [self] create $name $args}
 	set body [lindex $args end]
 	set args [lrange $args 0 end-1]
 	set obj [next $name {*}$args]
@@ -375,7 +375,7 @@ oo::class create Direct {
     }
 
     constructor {args} {
-	Debug.direct {Constructing [self]}
+	Debug.H.direct {Constructing [self]}
 	variable wildcard /
 	variable mount /
 	variable complain 0	;# complain if a named parameter doesn't exist?

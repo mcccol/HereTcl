@@ -155,12 +155,12 @@ proc url {args} {
 #	none
 
 proc parsePath_url {url {normalize 1}} {
-    Debug.url {Url parsePath $url - norm? $normalize}
+    Debug.H.url {Url parsePath $url - norm? $normalize}
     array set x {}
     regexp {^([^?\#]*)([?]([^\#]*))?(\#(.*))?$} $url \
 	-> x(path) . x(query) . x(fragment)
 
-    Debug.url {Url parsePath 1: $url -> [array get x]}
+    Debug.H.url {Url parsePath 1: $url -> [array get x]}
 
     if {$normalize} {
 	set x(path) [normalize [decode $x(path)]]	;# fix up oddities in URLs
@@ -173,7 +173,7 @@ proc parsePath_url {url {normalize 1}} {
 	}
     }
 
-    Debug.url {Url parsePath: $url -> [array get x]}
+    Debug.H.url {Url parsePath: $url -> [array get x]}
 
     return [array get x]
 }
