@@ -341,7 +341,7 @@ lappend largs access_log_fd [Logchan open [pwd]/access.log daily 1]
 
 puts stderr "H listening $largs"
 
-set ::listener [H listen {*}$largs $::port]	;# create a listener on $::port
+set ::listener [H listen {*}$largs no_legacy false $::port]	;# create a listener on $::port
 puts stderr "H listening on port $::port"
 
 ::vwait forever

@@ -12,7 +12,7 @@ H::load Hproc.tcl
 
 puts stderr "[package present H] Unit Tests"
 Debug on error
-Debug on httpbad
+Debug on H.httpbad
 
 if {0} {
     interp bgerror {} BGERROR
@@ -83,16 +83,16 @@ set phase 0
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Simple Tests"
     
-    Debug off listener
-    Debug off httpd
-    Debug off httpdlow
-    Debug off httpdtx
-    Debug off httpdtxlow
-    Debug off process
-    Debug off entity
-    Debug define cache
-    Debug define cookies
-    Debug define httpdchan
+    Debug off H.listener
+    Debug off H.httpd
+    Debug off H.httpdlow
+    Debug off H.httpdtx
+    Debug off H.httpdtxlow
+    Debug off H.process
+    Debug off H.entity
+    Debug define H.cache
+    Debug define H.cookies
+    Debug define H.httpdchan
 
     if {1} {
 	test simple-GET {perform a simple GET which returns some html} -setup {
@@ -300,16 +300,16 @@ after 0 {::apply {{} {
 
     # This test sends multiple asynchronous requests to the server and collects its responses
 
-    Debug off listener
-    Debug on httpd
-    Debug off httpdlow
-    Debug on httpdtx
-    Debug on httpdtxlow
-    Debug on process
-    Debug off entity
-    Debug define cache
-    Debug define cookies
-    Debug define httpdchan
+    Debug off H.listener
+    Debug on H.httpd
+    Debug off H.httpdlow
+    Debug on H.httpdtx
+    Debug on H.httpdtxlow
+    Debug on H.process
+    Debug off H.entity
+    Debug define H.cache
+    Debug define H.cookies
+    Debug define H.httpdchan
 
     set ::listener [H listen process [list ::apply {{r} {
 	# this server snippet returns the trailing uri element as a text/html val
@@ -360,8 +360,8 @@ puts "Phase $phase Open Chans [llength [chan names]]: [chan names]"
 # the tests need to be in event space
 after 0 {::apply {{} {
     puts stderr Phase:$::phase
-    #Debug on httpd
-    #Debug on httpdtx
+    #Debug on H.httpd
+    #Debug on H.httpdtx
 
     set ::listener [H listen timeout {} process [list ::apply {{r} {
 	# this server snippet pauses randomly, then returns the uri trailing element as an entity
@@ -413,7 +413,7 @@ puts "Open Chans [llength [chan names]]: [chan names]"
 # perform tests in event space
 after 0 {::apply {{} {
     puts stderr "Phase:$::phase Convert Tests - test the HConvert module"
-    #Debug on convert
+    #Debug on H.convert
 
     package require HConvert
 
@@ -448,7 +448,7 @@ after 0 {::apply {{} {
 	}
     }
 
-    Debug off convert
+    Debug off H.convert
     incr ::phase	;# these tests are complete
 }}}
 

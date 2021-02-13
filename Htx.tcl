@@ -785,13 +785,12 @@ proc TxClose {args} {
 
     # remove any empty promised replies
     corovar pending
+    Debug.H.process {[info coroutine] Tx hears Rx is CLOSING close:$close pending:[dict size $pending]}
     dict for {trx request} $pending {
 	if {![dict size $request]} {
 	    dict unset pending $trx
 	}
     }
-
-    Debug.H.process {[info coroutine] Tx hears Rx is CLOSING close:$close}
 }
 
 # TxTerminate - Rx indicates it's closing - Tx will close after clearing pending transmission queue

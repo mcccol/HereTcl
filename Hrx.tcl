@@ -673,6 +673,7 @@ proc RxProcess {R} {
 		# have read first line of header
 		variable no_legacy
 		set http [string toupper [lindex [split [string trim [dict get $R -Full]] " "] end]]
+		#set no_legacy false
 		if {![string match HTTP/* $http]} {
 		    return -code error -errorcode HTTP "This isn't even HTTP '[string trim [dict get $R -Full]]'"
 		    Bad $R $message
@@ -937,7 +938,7 @@ proc Rx {args} {
 
 	# default termination - close it all down
 	catch {chan close $socket read}	;# close the socket read side
-	catch {$tx TxClose 1}		;# inform Tx coro that we're closing
+	catch {after 0 [list catch [list $tx TxClose 1]]}		;# inform Tx coro that we're closing
 	if {[info exists ondisconnect]} {
 	    Debug.H.process {[info coroutine] ondisconnect '$ondisconnect' ($R)}
 	    try {

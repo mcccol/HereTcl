@@ -412,7 +412,7 @@ if {[info exists argv0] && ($argv0 eq [info script])} {
     puts stderr "[package present Direct] Unit Tests"
 
     Debug on error
-    Debug on direct
+    Debug on H.direct
     Debug on query
 
     package require tcltest

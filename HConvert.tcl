@@ -8,7 +8,7 @@
 
 package require OO
 package require Debug
-Debug define convert
+Debug define H.convert
 
 package provide HConvert 1.0
 

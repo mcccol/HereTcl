@@ -144,6 +144,7 @@ namespace eval ::Query {
 	switch -glob -- [lindex [split $ct \;] 0] {
 	    text/html -
 	    text/xml -
+	    text/plain -
 	    application/xml -
 	    application/x-www-form-urlencoded -
 	    application/x-www-urlencoded -
@@ -298,6 +299,7 @@ namespace eval ::Query {
 	if {[dict exists $r content-length]
 	    && ![dict get $r content-length]
 	} {
+	    # content-length == 0
 	    dict unset r content-length
 	    catch {dict unset r content-type}
 	    catch {dict unset r -entity}
@@ -306,8 +308,13 @@ namespace eval ::Query {
 		  || [dict exists $r -entitypath]
 	      } {
 	    # there is an entity body
-	    set ct [dict get $r content-type]
-	    Debug.query {parsing entity part of type '$ct'}
+	    if {[dict exists $r content-type]} {
+		set ct [dict get $r content-type]
+		Debug.query {parsing entity part of type '$ct'}
+	    } else {
+		set ct "text/plain; charset=us-ascii"
+		Debug.query {parsing entity part of (default) type '$ct'}
+	    }
 
 	    switch -glob -- [dict exists $r -entitypath],[dict exists $r -entity],[lindex [split $ct \;] 0] {
 		0,1,multipart/* {

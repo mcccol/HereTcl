@@ -376,7 +376,12 @@ namespace eval H {
 
 	dict update rq -reply rsp {
 	    if {[info exists rsp]} {
-		set rsp [dict merge $rsp $args]
+		try {
+		    dict merge $rsp $args
+		} on ok {rsp} {
+		} on error {e eo} {
+		    Debug.error {Error Merging ($rsp) with ($args) '$e' ($eo)}
+		}
 	    } else {
 		set rsp $args
 	    }
